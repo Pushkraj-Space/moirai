@@ -35,14 +35,11 @@ access controls.
 
 ## Useful reports
 
-Cloud adds separate controls: authenticated, expiring sessions; same-origin browser
-writes; OAuth state and PKCE; server-side permission checks on every archive and
-viewer route; immutable checkpoints; private-by-default publication; scoped team
-roles; revocation; bounded request concurrency; quotas; and authenticated encryption
-of stored archives. The publish client assists with local review and known token
-patterns. It cannot prove that tool output, inline media, or ordinary text is free
-of secrets. Cloud operators must secure Postgres, object storage, TLS, keys and
-backups. See [the sharing contract](docs/CLOUD.md) and [operations](docs/OPERATIONS.md).
+The hosted backend and website are maintained separately. This repository's
+publish client assists with local review and known token patterns; it cannot
+prove that tool output, inline media, or ordinary text is free of secrets.
+Review archives before uploading and use a trusted service origin. Report hosted
+service issues to its operator.
 
 - path traversal, unsafe symlink handling, or unintended deletion;
 - command execution caused by imported content;

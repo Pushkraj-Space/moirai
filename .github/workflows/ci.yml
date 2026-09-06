@@ -9,48 +9,6 @@ permissions:
   contents: read
 
 jobs:
-  cloud-postgres:
-    name: Cloud integration (Postgres)
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: moirai_test
-          POSTGRES_PASSWORD: synthetic-test-password
-          POSTGRES_DB: moirai_test
-        ports:
-          - 5432:5432
-        options: --health-cmd "pg_isready -U moirai_test" --health-interval 5s --health-timeout 3s --health-retries 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-      - run: go test -race ./internal/cloud/...
-        env:
-          MOIRAI_TEST_POSTGRES: postgres://moirai_test:synthetic-test-password@localhost:5432/moirai_test?sslmode=disable
-          MOIRAI_CLI_E2E: '1'
-      - run: docker build -t moirai-cloud:test .
-  browser:
-    name: Browser sharing journey
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npx playwright install --with-deps chromium
-      - run: go test ./internal/cloud -run TestBrowserJourney -v -count=1
-        env:
-          MOIRAI_BROWSER_TESTS: '1'
   go:
     name: Go (${{ matrix.os }})
     strategy:

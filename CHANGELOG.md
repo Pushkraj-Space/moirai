@@ -6,18 +6,14 @@ by `schema_version`.
 
 ## 0.2.0 (unreleased)
 
-- Raise the source-build Go requirement to 1.26.8 for patched backend dependencies.
+- Raise the source-build Go requirement to 1.26.8.
 
-- Add the optional Moirai Cloud server with GitHub OAuth/CLI approval, Postgres,
-  encrypted S3 archives, quotas, immutable publications, expiry, revocation,
-  invitations, team ownership and audit events.
+- Keep the hosted backend, website, and deployment tooling in a separate private
+  repository; retain the open-source core, CLI, SDK, and local sharing preparation.
 - Add local publish review/redaction, login/logout, pull, unpublish, cloud-delete,
   invitations, team commands, doctor, and import/continue dry-run previews.
 - Accept verified `.moirai` archives directly in inspect/import/continue.
-- Embed a responsive landing page, durable waitlist, account dashboard and
-  safely escaped checkpoint viewer with accurate registry-driven support counts.
-- Add Docker/Compose/Caddy deployment configuration, recovery documentation,
-  Postgres/S3/browser integration tests, and cross-platform binary packaging.
+- Add cross-platform binary packaging.
 - Prepare native release checksums/provenance and document npm trusted publishing.
 
 ## 0.1.2

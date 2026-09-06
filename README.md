@@ -47,12 +47,13 @@ This local version is the foundation of Moirai, not a limited client for the
 hosted product. It remains useful on its own and keeps session data under the
 user's control.
 
-### Moirai Cloud: deployable beta
+### Moirai Cloud client
 
-This source tree includes an optional Go server, GitHub sign-in, encrypted archive
-storage, Postgres metadata, team ownership, and a browser interface. Public
-service availability depends on the operator's deployment; a checked-out server
-implementation does not imply that `moirai.to` is live. Paid plans are not enabled.
+This public repository contains the core library, CLI, TypeScript SDK, and local
+sharing preparation. The hosted backend, landing page, dashboard, and deployment
+configuration are maintained separately in a private repository. The CLI can
+connect to a configured Moirai service; these commands do not imply that
+`moirai.to` is live. Local functionality requires no hosted account.
 
 Prepare and inspect an archive locally before publishing:
 
@@ -89,8 +90,8 @@ your stable account ID, `team invite TEAM --user ACCOUNT_ID --role writer` to ad
 a collaborator, and `publish FILE --team TEAM --yes` for team-owned checkpoints.
 Team owners administer access; writers publish and read; readers only read.
 
-See [the sharing contract](docs/CLOUD.md), [deployment and recovery](docs/OPERATIONS.md),
-and [installation/release instructions](docs/INSTALL.md).
+See [installation/release instructions](docs/INSTALL.md). Configure the service
+origin supplied by your operator; hosted deployment is not part of this repo.
 
 ## Install
 
