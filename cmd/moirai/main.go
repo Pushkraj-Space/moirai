@@ -15,7 +15,7 @@ import (
 	moirai "github.com/october-dev/moirai"
 )
 
-const version = "0.1.2"
+const version = "0.2.0"
 
 type app struct {
 	out io.Writer
@@ -44,6 +44,33 @@ func (a app) run(ctx context.Context, args []string) error {
 		return nil
 	case "formats":
 		return a.formats(args[1:])
+	case "doctor":
+		return a.doctor(args[1:])
+	case "login":
+		return a.cloudLogin(ctx, args[1:])
+	case "logout":
+		return a.cloudLogout(ctx, args[1:])
+	case "whoami":
+		c, err := loadCloud("")
+		if err != nil {
+			return err
+		}
+		data, _, err := c.request(ctx, "GET", "/v1/me", nil, "")
+		if err != nil {
+			return err
+		}
+		_, err = a.out.Write(append(data, '\n'))
+		return err
+	case "team":
+		return a.team(ctx, args[1:])
+	case "publish":
+		return a.publish(ctx, args[1:])
+	case "pull":
+		return a.pull(ctx, args[1:])
+	case "fork":
+		return a.fork(ctx, args[1:])
+	case "unpublish", "cloud-delete", "invite":
+		return a.cloudMutation(ctx, args[0], args[1:])
 	case "inspect":
 		return a.inspect(args[1:])
 	case "convert":
@@ -73,6 +100,17 @@ func (a app) usage() {
 	fmt.Fprintln(a.err, `Moirai moves resumable AI-agent sessions between supported harnesses.
 
 Usage:
+  moirai doctor [--json]
+  moirai login [--server https://moirai.to]
+  moirai logout
+  moirai whoami
+  moirai team list|create|members|invite|remove [arguments]
+  moirai publish <file|session-id> [--from format] [--preview-out file] [--yes]
+  moirai pull <share-url|id> --out session.moirai
+  moirai fork <share-url|id> --yes
+  moirai invite <id> --login github-handle
+  moirai unpublish <id> --yes
+  moirai cloud-delete <id> --yes
   moirai formats [--json]
   moirai inspect <file|-> [--from format] [--json]
   moirai convert <file|-> --to format [--from format] [--out file]
@@ -80,8 +118,8 @@ Usage:
   moirai show <session-id> --format format [--json]
   moirai search <query> [--format format] [--limit n] [--json]
   moirai export <session-id> --format format [--out file]
-  moirai import <file|-> --to format [--from format]
-  moirai continue <file|session-id> --with format [--from format] [--no-launch]
+  moirai import <file|-> --to format [--from format] [--dry-run] [--json]
+  moirai continue <file|session-id> --with format [--from format] [--no-launch] [--dry-run] [--json]
   moirai delete <session-id> --format format --yes
   moirai archive create <file|-> [--from format] --out file.moirai
   moirai archive verify <file.moirai>`)
@@ -375,6 +413,8 @@ func (a app) importSession(ctx context.Context, args []string, continuing bool) 
 	to := fs.String("to", "", "target format")
 	with := fs.String("with", "", "target harness")
 	noLaunch := fs.Bool("no-launch", false, "save without starting the target harness")
+	dryRun := fs.Bool("dry-run", false, "render and preview without saving or launching")
+	asJSON := fs.Bool("json", false, "emit a machine-readable preview")
 	maxInput := fs.Int64("max-input-bytes", 0, "maximum input or stored session bytes")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -450,6 +490,27 @@ func (a app) importSession(ctx context.Context, args []string, continuing bool) 
 	store, err := registry.Store(moirai.Format(target))
 	if err != nil {
 		return err
+	}
+	if *dryRun {
+		codec, err := moirai.DefaultRegistry.Codec(moirai.Format(target))
+		if err != nil {
+			return err
+		}
+		if !codec.Info().Capability.Save {
+			return moirai.ErrUnsupported
+		}
+		rendered, err := codec.Render(&copy, moirai.RenderOptions{Limits: storeLimits(*maxInput), ID: id})
+		if err != nil {
+			return err
+		}
+		warnings = append(warnings, rendered.Warnings...)
+		report := map[string]any{"dry_run": true, "source_format": sourceFormat, "target_format": target, "destination_store": store.Root(), "messages": len(copy.Messages), "rendered_bytes": len(rendered.Data), "launch": continuing && !*noLaunch, "warnings": warnings, "provenance": provenance}
+		if *asJSON {
+			return writeJSON(a.out, report)
+		}
+		a.printWarnings(warnings)
+		fmt.Fprintf(a.out, "Preview: %s → %s, %d messages, %d bytes\nDestination: %s\nLaunch: %t\n", sourceFormat, target, len(copy.Messages), len(rendered.Data), moirai.ScrubTerminal(store.Root()), continuing && !*noLaunch)
+		return nil
 	}
 	saved, err := store.Save(ctx, &copy, moirai.RenderOptions{Limits: storeLimits(*maxInput), ID: id})
 	if err != nil {
@@ -586,6 +647,16 @@ func parseFile(path string, format moirai.Format, limits moirai.Limits) (*moirai
 	data, err := readInput(path, limits.MaxInputBytes)
 	if err != nil {
 		return nil, "", err
+	}
+	var envelope struct {
+		Format string `json:"format"`
+	}
+	if json.Unmarshal(data, &envelope) == nil && envelope.Format == "moirai.session" {
+		transcript, err := moirai.DecodeArchive(data, limits)
+		if err != nil {
+			return nil, "", err
+		}
+		return &moirai.ParseResult{Transcript: transcript}, moirai.FormatSimple, nil
 	}
 	return moirai.Parse(data, format, moirai.ParseOptions{Limits: limits, SourceID: strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))})
 }

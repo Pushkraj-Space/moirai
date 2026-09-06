@@ -1,0 +1,134 @@
+<section class="hero">
+  <div>
+    <p class="eyebrow">The open session layer for agent work</p>
+    <h2>Your work has a history.<br /><em>Give it a future.</em></h2>
+    <p>
+      Move from Claude Code to Codex or Pi. Inspect the history, hand over a
+      checkpoint, and continue with its ancestry intact.
+    </p>
+    <div class="actions">
+      <a
+        class="button"
+        href="https://github.com/october-dev/moirai/releases/latest"
+        >Install the CLI</a
+      ><a class="button secondary" href="/app">Open Moirai Cloud</a>
+    </div>
+    <pre><code>moirai list
+moirai continue SESSION_ID --from claude_code --with codex</code></pre>
+    <p class="muted">
+      Free, open source, and useful offline. Cloud publishing is always
+      explicit.
+    </p>
+  </div>
+  <article class="sample">
+    <span class="pill">Example session</span>
+    <h3>Fix the token refresh race</h3>
+    <ol class="timeline">
+      <li>
+        <strong>Started in Claude Code</strong>
+        <p>Understand the failing request</p>
+      </li>
+      <li>
+        <strong>Checkpoint reviewed</strong>
+        <p>Choose the context to carry forward</p>
+      </li>
+      <li>
+        <strong>Continued in Codex</strong>
+        <p>New session. Original ancestry.</p>
+      </li>
+    </ol>
+    <a href="/app">Share your own checkpoint →</a>
+  </article>
+</section>
+<section>
+  <h2>One thread, across your tools.</h2>
+  <p>
+    {{.Formats}} readable formats · {{.Continue}} direct continuation targets.
+    Capabilities vary by tool.
+  </p>
+  <div class="chips">
+    {{range .Harnesses}}<span class="pill"
+      >{{.DisplayName}}{{if .Capability.Continue}} ↗{{end}}</span
+    >{{end}}
+  </div>
+  <a
+    href="https://github.com/october-dev/moirai/blob/main/docs/COMPATIBILITY.md"
+    >See exactly what carries over →</a
+  >
+</section>
+<section class="grid">
+  <article>
+    <h3>1. Choose a checkpoint</h3>
+    <p>
+      Find your session, select a message range, and review what will travel.
+    </p>
+  </article>
+  <article>
+    <h3>2. Share with intention</h3>
+    <p>
+      Keep it private, invite an account, or create an unlisted or public link.
+    </p>
+  </article>
+  <article>
+    <h3>3. Keep working</h3>
+    <p>
+      Open the checkpoint on another machine and continue in an installed
+      harness.
+    </p>
+  </article>
+</section>
+<section>
+  <h2>Local is free. Hosting is optional.</h2>
+  <p>
+    The CLI and SDK have no account requirement. This hosted beta allows 100
+    active publications and 256 MiB per account, with a 32 MiB archive limit.
+    Teams can share ownership with writer and reader roles. Paid plans are not
+    yet enabled.
+  </p>
+  <details>
+    <summary>Does this transfer my whole machine or repository?</summary>
+    <p>
+      No. It transfers the supported conversation context. Local files, live
+      processes, credentials, and the source repository are not automatically
+      uploaded. Prepare the destination workspace separately.
+    </p>
+  </details>
+  <details>
+    <summary>Can I revoke a link?</summary>
+    <p>
+      Yes. New requests stop immediately. Revocation cannot recall copies
+      someone already downloaded or independently published.
+    </p>
+  </details>
+  <details>
+    <summary>Will all tools resume identically?</summary>
+    <p>
+      Different tools support different context. Preview the compatibility
+      warnings with <code>--dry-run</code> before importing.
+    </p>
+  </details>
+</section>
+<section>
+  <h2>Follow the next chapter.</h2>
+  <form id="waitlist">
+    <label for="email">Email for product updates</label
+    ><input
+      id="email"
+      name="email"
+      type="email"
+      required
+      maxlength="254"
+      autocomplete="email"
+    /><label class="trap"
+      >Leave empty<input
+        name="company"
+        tabindex="-1"
+        autocomplete="off" /></label
+    ><label
+      ><input type="checkbox" required /> Send me Moirai updates. I can request
+      removal through the support contact.</label
+    ><button>Keep me posted</button>
+    <p class="status" role="status"></p>
+  </form>
+  <p><a href="/privacy">How we handle your data</a></p>
+</section>

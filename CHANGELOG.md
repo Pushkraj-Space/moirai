@@ -4,6 +4,22 @@ All notable changes are documented here. Moirai follows semantic versioning for
 the Go and TypeScript APIs; the portable document version is declared separately
 by `schema_version`.
 
+## 0.2.0 (unreleased)
+
+- Raise the source-build Go requirement to 1.26.8 for patched backend dependencies.
+
+- Add the optional Moirai Cloud server with GitHub OAuth/CLI approval, Postgres,
+  encrypted S3 archives, quotas, immutable publications, expiry, revocation,
+  invitations, team ownership and audit events.
+- Add local publish review/redaction, login/logout, pull, unpublish, cloud-delete,
+  invitations, team commands, doctor, and import/continue dry-run previews.
+- Accept verified `.moirai` archives directly in inspect/import/continue.
+- Embed a responsive landing page, durable waitlist, account dashboard and
+  safely escaped checkpoint viewer with accurate registry-driven support counts.
+- Add Docker/Compose/Caddy deployment configuration, recovery documentation,
+  Postgres/S3/browser integration tests, and cross-platform binary packaging.
+- Prepare native release checksums/provenance and document npm trusted publishing.
+
 ## 0.1.2
 
 - Match Claude Code's project-directory encoding for every non-alphanumeric

@@ -1,0 +1,13 @@
+<section class="sample">
+  <p>Signed in as <strong>@{{.Login}}</strong>.</p>
+  <p>
+    This terminal will receive access to your Moirai account for 30 days. Only
+    approve a request you started.
+  </p>
+  <code>{{.ID}}</code>
+  <form method="post" action="/connect">
+    <input type="hidden" name="id" value="{{.ID}}" /><button>
+      Approve this terminal
+    </button>
+  </form>
+</section>

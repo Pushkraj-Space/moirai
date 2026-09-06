@@ -1,0 +1,10 @@
+{
+  "name": "moirai-web-tests",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/browser/prepare.test.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}

@@ -1,0 +1,51 @@
+name: CLI packages
+on:
+  pull_request:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            os: linux
+            arch: amd64
+          - runner: ubuntu-latest
+            os: linux
+            arch: arm64
+          - runner: macos-15-intel
+            os: darwin
+            arch: amd64
+          - runner: macos-latest
+            os: darwin
+            arch: arm64
+          - runner: windows-latest
+            os: windows
+            arch: amd64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: node .github/scripts/package.mjs
+        env:
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            dist/releases/*.tar.gz
+            dist/releases/*.sha256
+            dist/releases/*.exe
+          if-no-files-found: error

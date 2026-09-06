@@ -47,53 +47,58 @@ This local version is the foundation of Moirai, not a limited client for the
 hosted product. It remains useful on its own and keeps session data under the
 user's control.
 
-### Moirai Cloud: free and paid hosted plans (planned)
+### Moirai Cloud: deployable beta
 
-Moirai Cloud will be the optional managed remote for agent sessions. It is
-intended for people who want cross-machine sharing and collaboration without
-operating storage, APIs, servers, or deployment infrastructure themselves. A
-free hosted tier and paid plans are planned; exact limits, pricing, and launch
-availability will be published before the service opens.
+This source tree includes an optional Go server, GitHub sign-in, encrypted archive
+storage, Postgres metadata, team ownership, and a browser interface. Public
+service availability depends on the operator's deployment; a checked-out server
+implementation does not imply that `moirai.to` is live. Paid plans are not enabled.
 
-The planned hosted workflow is:
+Prepare and inspect an archive locally before publishing:
 
-1. A user explicitly publishes a selected session checkpoint and receives a
-   shareable link.
-2. Someone on another machine opens that link, chooses a supported harness,
-   and continues the session as a new local session.
-3. A user can fork a shared session at a checkpoint and explore a different
-   approach without changing the original.
-4. Contributors can share work derived from a session back with its owner,
-   while Moirai retains the ancestry needed to understand where it came from.
+```bash
+moirai login --server https://YOUR_MOIRAI_ORIGIN
+moirai publish 'SESSION_ID#12-38' --from claude_code --preview-out reviewed.moirai
+moirai publish reviewed.moirai --visibility private --yes
+moirai invite PUBLICATION_ID --login teammate
+```
 
-The analogy to Git is about workflow, not storage format:
+The preparation step strips workspace metadata and persisted thinking, omits
+local media references, and redacts recognizable token patterns. Inspect the
+entire prepared archive: tool output, metadata, and inline media can still contain
+sensitive material. Uploads are explicit, immutable, and private by default.
+Use `--visibility unlisted` for anyone-with-the-link access or `public` for public
+access. The default expiry is seven days; `--expires 0` disables expiry.
 
-| Agent workflow | Git-like idea |
-| --- | --- |
-| Local harness session | Working copy |
-| Portable session checkpoint | Commit |
-| Published hosted session | Remote history |
-| Continue from a shareable link | Clone and check out |
-| Start an independent continuation | Fork or branch |
-| Share derived agent work with the owner | Contribution based on common ancestry |
+On another machine:
 
-Hosted collaboration will build on the same canonical transcript and
-provenance model as the local tools. Receiving a shared session will create a
-new destination session rather than overwrite the publisher's original.
-Different harnesses still expose different runtime state, so hosted handoffs
-will report the same compatibility warnings and continuity boundary described
-below.
+```bash
+moirai pull https://YOUR_MOIRAI_ORIGIN/s/PUBLICATION_ID --out session.moirai
+moirai continue session.moirai --with codex --dry-run
+moirai continue session.moirai --with codex
+moirai publish DERIVED_FILE --parent PUBLICATION_ID --yes
+```
 
-Local discovery never implies cloud upload. Publishing will be an explicit
-action because agent histories may contain source code, tool output,
-credentials, or other sensitive material. Visibility, access, retention, and
-security behavior for hosted sessions will be documented before launch. Until
-then, the hosted capabilities described here are product direction, not a
-claim that the service is currently available.
+Prepare the destination repository separately. Continuing creates a fresh native
+session and surfaces compatibility warnings. `moirai unpublish ID --yes` revokes
+future service access; `moirai cloud-delete ID --yes` deletes the live archive.
+Neither operation can recall downloaded copies or independent forks.
+
+`moirai team create NAME` creates a shared workspace. Use `moirai whoami` to get
+your stable account ID, `team invite TEAM --user ACCOUNT_ID --role writer` to add
+a collaborator, and `publish FILE --team TEAM --yes` for team-owned checkpoints.
+Team owners administer access; writers publish and read; readers only read.
+
+See [the sharing contract](docs/CLOUD.md), [deployment and recovery](docs/OPERATIONS.md),
+and [installation/release instructions](docs/INSTALL.md).
 
 ## Install
 
-Go 1.25.8 or newer:
+Prebuilt CLI archives, checksums, and provenance are produced by the v0.2.0+
+release workflow. See [installation instructions](docs/INSTALL.md). The npm
+package is the TypeScript SDK, not the native CLI.
+
+Go 1.26.8 or newer:
 
 ```bash
 go install github.com/october-dev/moirai/cmd/moirai@latest
@@ -285,8 +290,10 @@ accepts only exports supplied directly by the user.
   retains the original data.
 
 Session histories can still contain secrets that the source harness recorded.
-Inspect an export before sharing it; Moirai intentionally does not guess which
-project data should be redacted. See [SECURITY.md](SECURITY.md).
+Local conversion preserves their contents. Cloud publication preparation removes
+workspace metadata and persisted thinking by default and redacts known token
+patterns, but cannot identify every project secret. Inspect the prepared archive
+before confirming upload. See [SECURITY.md](SECURITY.md).
 
 ## Format and compatibility
 

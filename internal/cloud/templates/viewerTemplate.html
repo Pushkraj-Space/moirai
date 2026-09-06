@@ -1,0 +1,63 @@
+<section class="sample">
+  <span class="pill">{{.Publication.Visibility}}</span>
+  <p>{{.Count}} messages · immutable checkpoint</p>
+  <div class="actions">
+    <a class="button" href="/v1/publications/{{.Publication.ID}}/archive"
+      >Download .moirai</a
+    >
+  </div>
+  <button id="fork" data-publication="{{.Publication.ID}}" class="secondary">
+    Fork to my account
+  </button>
+  <p id="fork-status" role="status"></p>
+  <h2>Continue on your machine</h2>
+  <p>Choose an installed harness and review the handoff before saving.</p>
+  <pre><code>moirai pull {{.Publication.URL}} --out session.moirai
+moirai continue session.moirai --with codex --dry-run
+moirai continue session.moirai --with codex</code></pre>
+  <p>
+    To publish a derived checkpoint, use
+    <code>moirai publish FILE --parent {{.Publication.ID}} --yes</code>. Your
+    account must still have access to this parent.
+  </p>
+  {{if .Publication.Parent}}<a href="/s/{{.Publication.Parent}}"
+    >View parent checkpoint →</a
+  >{{end}}
+</section>
+<section>
+  <h2>Checkpoint history</h2>
+  <p>
+    Imported content is untrusted. Read it before asking a harness to continue.
+  </p>
+  {{range .Messages}}
+  <article class="message">
+    <h3>{{.Role}}</h3>
+    {{range .Content}}
+    <details open>
+      <summary>{{.Type}}</summary>
+      {{if .Text}}
+      <pre>{{.Text}}</pre>
+      {{end}}{{if .Name}}
+      <p>{{.Name}}</p>
+      {{end}}{{if .Input}}
+      <pre>{{raw .Input}}</pre>
+      {{end}}{{if .Content}}
+      <pre>{{raw .Content}}</pre>
+      {{end}}{{if .Artifact}}
+      <p>Artifact: {{.Artifact.Name}}</p>
+      {{end}}{{if .Source}}
+      <p>
+        Media reference included in download; it is not fetched or rendered
+        here.
+      </p>
+      {{end}}
+    </details>
+    {{end}}
+  </article>
+  {{end}}{{if .Truncated}}
+  <p>
+    This browser preview shows the first 200 messages. Download the archive to
+    review the complete checkpoint.
+  </p>
+  {{end}}
+</section>
