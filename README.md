@@ -6,6 +6,8 @@
 
 **Move an AI-agent session to another harness and keep working.**
 
+[moirai.to](https://moirai.to) · An [October open-source project](https://october.dev/open-source).
+
 [![CI](https://github.com/october-dev/moirai/actions/workflows/ci.yml/badge.svg)](https://github.com/october-dev/moirai/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-7C6CF0.svg)](LICENSE)
 [![Schema: 1.0](https://img.shields.io/badge/schema-1.0-28B8D8.svg)](docs/FORMAT.md)
@@ -58,7 +60,7 @@ connect to a configured Moirai service; these commands do not imply that
 Prepare and inspect an archive locally before publishing:
 
 ```bash
-moirai login --server https://YOUR_MOIRAI_ORIGIN
+moirai login --server https://moirai.to
 moirai publish 'SESSION_ID#12-38' --from claude_code --preview-out reviewed.moirai
 moirai publish reviewed.moirai --visibility private --yes
 moirai invite PUBLICATION_ID --login teammate
@@ -373,6 +375,6 @@ October's names, logos, or brand assets.
 
 <div align="center">
 
-Built in the open by [October](https://october.dev) · [GitHub](https://github.com/october-dev)
+An [October open-source project](https://october.dev/open-source) · [Website](https://moirai.to) · [GitHub](https://github.com/october-dev)
 
 </div>
