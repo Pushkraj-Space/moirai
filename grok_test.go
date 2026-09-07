@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func readGrokFixture(t *testing.T) []byte {
@@ -96,6 +97,13 @@ func TestGrokParserFields(t *testing.T) {
 		t.Errorf("tool result = %+v, call ID = %q", result, call.ID)
 	}
 	assertGrokJSONEqual(t, result.Content, json.RawMessage(`"Invented sample contents."`))
+	// The failed-result update is ignored, including its distinct event timestamp.
+	if result.IsError {
+		t.Error("tool result IsError = true, want omitted updates-only error status")
+	}
+	if messages[3].Timestamp != wantMeta.Timestamp {
+		t.Errorf("tool result timestamp = %q, want summary.created_at fallback %q", messages[3].Timestamp, wantMeta.Timestamp)
+	}
 	if len(parsed.Warnings) != 1 {
 		t.Fatalf("warnings = %+v, want exactly one", parsed.Warnings)
 	}
@@ -136,8 +144,8 @@ func TestGrokTitleFallback(t *testing.T) {
 	}
 }
 
-func TestGrokRoundTrip(t *testing.T) {
-	original := &Transcript{
+func newGrokRoundTripTranscript() *Transcript {
+	return &Transcript{
 		SchemaVersion: SchemaVersion,
 		Meta: Metadata{ID: "invented-grok-round-trip", Timestamp: "2026-02-01T00:00:00Z",
 			Model: "session-model", Title: "Invented round trip", CWD: "/tmp/invented-project", GitBranch: "test/invented"},
@@ -147,11 +155,124 @@ func TestGrokRoundTrip(t *testing.T) {
 			{Role: RoleAssistant, Timestamp: "2026-02-01T00:00:03Z", Model: "tool-model", StopReason: "tool_use", Content: []Block{
 				{Type: BlockText, Text: "Reading it now."},
 				{Type: BlockToolUse, ID: "round-trip-call", Name: "read_sample", Input: json.RawMessage(`{"path":"missing.txt","options":{"lines":2,"trim":true}}`)},
+				{Type: BlockToolUse, ID: "round-trip-success-call", Name: "read_sample", Input: json.RawMessage(`{"path":"sample.txt","lines":2}`)},
 			}},
-			{Role: RoleUser, Timestamp: "2026-02-01T00:00:04Z", Content: []Block{{Type: BlockToolResult, ToolUseID: "round-trip-call", Content: json.RawMessage(`"Invented file is missing."`), IsError: true}}},
-			{Role: RoleAssistant, Timestamp: "2026-02-01T00:00:05Z", Model: "final-model", Content: []Block{{Type: BlockText, Text: "The invented sample could not be read."}}},
+			{Role: RoleUser, Timestamp: "2026-02-01T00:00:04.250Z", Content: []Block{{Type: BlockToolResult, ToolUseID: "round-trip-call", Content: json.RawMessage(`"Invented file is missing."`), IsError: true}}},
+			{Role: RoleUser, Timestamp: "2026-02-01T00:00:05Z", Content: []Block{{Type: BlockToolResult, ToolUseID: "round-trip-success-call", Content: json.RawMessage(`"Invented sample contents."`), IsError: false}}},
+			{Role: RoleAssistant, Timestamp: "2026-02-01T00:00:06Z", Model: "final-model", Content: []Block{{Type: BlockText, Text: "One invented sample was missing; the other was read."}}},
 		},
 	}
+}
+
+func TestGrokRenderNativeEvents(t *testing.T) {
+	original := newGrokRoundTripTranscript()
+	rendered, err := (GrokCodec{}).Render(original, RenderOptions{Limits: DefaultLimits()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Inspect native events directly: Parse ignores updates entirely.
+	type nativeEvent struct {
+		Timestamp int64  `json:"timestamp"`
+		Method    string `json:"method"`
+		Params    struct {
+			SessionID string `json:"sessionId"`
+			Update    struct {
+				SessionUpdate string `json:"sessionUpdate"`
+				ToolCallID    string `json:"toolCallId"`
+				Status        string `json:"status"`
+				StopReason    string `json:"stop_reason"`
+			} `json:"update"`
+			Meta struct {
+				AgentTimestampMs int64 `json:"agentTimestampMs"`
+			} `json:"_meta"`
+		} `json:"params"`
+	}
+	var doc struct {
+		ChatHistory []struct {
+			ToolCalls []struct {
+				ID string `json:"id"`
+			} `json:"tool_calls"`
+		} `json:"chat_history"`
+		Updates []nativeEvent `json:"updates"`
+	}
+	if err := json.Unmarshal(rendered.Data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	chatCalls := make(map[string]int)
+	for _, record := range doc.ChatHistory {
+		for _, call := range record.ToolCalls {
+			chatCalls[call.ID]++
+		}
+	}
+	toolCalls := make(map[string][]nativeEvent)
+	toolResults := make(map[string][]nativeEvent)
+	var toolTurns []nativeEvent
+	var completedTurns, endTurns int
+	for i, event := range doc.Updates {
+		if event.Method != "session/update" || event.Params.SessionID != original.Meta.ID {
+			t.Errorf("update %d method/session = %q/%q, want session/update/%s", i, event.Method, event.Params.SessionID, original.Meta.ID)
+		}
+		update := event.Params.Update
+		switch update.SessionUpdate {
+		case "tool_call":
+			toolCalls[update.ToolCallID] = append(toolCalls[update.ToolCallID], event)
+		case "tool_call_update":
+			// Bucket by call ID before checking status so duplicates cannot hide.
+			toolResults[update.ToolCallID] = append(toolResults[update.ToolCallID], event)
+		case "turn_completed":
+			completedTurns++
+			switch update.StopReason {
+			case "tool_use":
+				toolTurns = append(toolTurns, event)
+			case "end_turn":
+				endTurns++
+			default:
+				t.Errorf("turn_completed stop_reason = %q, want tool_use or end_turn", update.StopReason)
+			}
+		}
+	}
+	if len(chatCalls) != 2 || len(toolCalls) != 2 || len(toolResults) != 2 {
+		t.Fatalf("distinct tool IDs in chat_history/tool_call/tool_call_update = %d/%d/%d, want 2/2/2", len(chatCalls), len(toolCalls), len(toolResults))
+	}
+	assertTimestamp := func(t *testing.T, event nativeEvent, wantMs int64) {
+		t.Helper()
+		if event.Params.Meta.AgentTimestampMs != wantMs || event.Timestamp != wantMs/1000 {
+			t.Errorf("%s event timestamps ms/seconds = %d/%d, want %d/%d", event.Params.Update.SessionUpdate, event.Params.Meta.AgentTimestampMs, event.Timestamp, wantMs, wantMs/1000)
+		}
+	}
+	for _, tc := range []struct {
+		id     string
+		status string
+		stamp  int64
+	}{
+		{"round-trip-call", "failed", time.Date(2026, time.February, 1, 0, 0, 4, 250000000, time.UTC).UnixMilli()},
+		{"round-trip-success-call", "completed", time.Date(2026, time.February, 1, 0, 0, 5, 0, time.UTC).UnixMilli()},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			if chatCalls[tc.id] != 1 || len(toolCalls[tc.id]) != 1 {
+				t.Errorf("chat_history/tool_call count = %d/%d, want 1/1", chatCalls[tc.id], len(toolCalls[tc.id]))
+			}
+			results := toolResults[tc.id]
+			if len(results) != 1 {
+				t.Fatalf("tool_call_update count = %d, want 1", len(results))
+			}
+			if got := results[0].Params.Update.Status; got != tc.status {
+				t.Errorf("tool_call_update status = %q, want %q", got, tc.status)
+			}
+			assertTimestamp(t, results[0], tc.stamp)
+		})
+	}
+	if completedTurns != 3 || endTurns != 2 {
+		t.Errorf("turn_completed/end_turn counts = %d/%d, want 3/2", completedTurns, endTurns)
+	}
+	if len(toolTurns) != 1 {
+		t.Fatalf("tool_use completion count = %d, want 1", len(toolTurns))
+	}
+	assertTimestamp(t, toolTurns[0], time.Date(2026, time.February, 1, 0, 0, 3, 0, time.UTC).UnixMilli())
+}
+
+func TestGrokRoundTrip(t *testing.T) {
+	original := newGrokRoundTripTranscript()
 	rendered, err := (GrokCodec{}).Render(original, RenderOptions{Limits: DefaultLimits()})
 	if err != nil {
 		t.Fatal(err)
@@ -203,8 +324,19 @@ func TestGrokRoundTrip(t *testing.T) {
 			}
 		}
 	}
-	if got.Messages[2].Content[1].ID != got.Messages[3].Content[0].ToolUseID {
-		t.Error("round trip broke tool call/result pairing")
+	calls, results := make(map[string]int), make(map[string]int)
+	for _, message := range got.Messages {
+		for _, block := range message.Content {
+			switch block.Type {
+			case BlockToolUse:
+				calls[block.ID]++
+			case BlockToolResult:
+				results[block.ToolUseID]++
+			}
+		}
+	}
+	if !reflect.DeepEqual(calls, results) {
+		t.Errorf("round trip broke tool call/result pairing: calls = %v, results = %v", calls, results)
 	}
 }
 

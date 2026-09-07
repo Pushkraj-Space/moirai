@@ -16,6 +16,23 @@
     {"type": "tool_result", "tool_call_id": "fixture-unknown-call", "content": "Omit this unpaired result."}
   ],
   "updates": [
-    {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "UPDATES_ONLY_INVENTED_GROK_MARKER"}}
+    {
+      "timestamp": 1767225720,
+      "method": "session/update",
+      "params": {
+        "sessionId": "native-grok",
+        "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "UPDATES_ONLY_INVENTED_GROK_MARKER"}},
+        "_meta": {"agentTimestampMs": 1767225720000}
+      }
+    },
+    {
+      "timestamp": 1767225780,
+      "method": "session/update",
+      "params": {
+        "sessionId": "native-grok",
+        "update": {"sessionUpdate": "tool_call_update", "toolCallId": "fixture-call-1", "status": "failed", "content": "Invented sample contents."},
+        "_meta": {"agentTimestampMs": 1767225780000}
+      }
+    }
   ]
 }
