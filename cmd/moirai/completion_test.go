@@ -25,13 +25,32 @@ import (
 // two archive cases each own a different fs, while importSession owns one fs
 // that serves two commands. Unknown constructions fail rather than disappearing.
 func TestCompletionDrift(t *testing.T) {
-	parsed, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
+	paths, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	var files []*ast.File
+	var functions []*ast.FuncDecl
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		parsed, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, parsed)
+		for _, decl := range parsed.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
+				functions = append(functions, fn)
+			}
+		}
 	}
 	commands := map[string]bool{}
 	actual := map[string]map[string]bool{}
 	handled := map[*ast.CallExpr]bool{}
+	var mutationAliases []string
 	literal := func(expr ast.Expr) string {
 		t.Helper()
 		lit, ok := expr.(*ast.BasicLit)
@@ -44,10 +63,14 @@ func TestCompletionDrift(t *testing.T) {
 		}
 		return s
 	}
-	for _, decl := range parsed.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Body == nil {
-			continue
+	var team *ast.FuncDecl
+	// Discover dispatch before flags: shared handlers may live in earlier files.
+	for _, fn := range functions {
+		if fn.Name.Name == "team" {
+			if team != nil {
+				t.Fatal("duplicate team dispatch")
+			}
+			team = fn
 		}
 		if fn.Name.Name == "run" || fn.Name.Name == "archive" {
 			for _, stmt := range fn.Body.List {
@@ -57,8 +80,30 @@ func TestCompletionDrift(t *testing.T) {
 				}
 				for _, stmt := range sw.Body.List {
 					clause := stmt.(*ast.CaseClause)
+					sharedMutation := false
+					if fn.Name.Name == "run" {
+						ast.Inspect(clause, func(n ast.Node) bool {
+							call, ok := n.(*ast.CallExpr)
+							if !ok {
+								return true
+							}
+							sel, ok := call.Fun.(*ast.SelectorExpr)
+							if !ok || sel.Sel.Name != "cloudMutation" {
+								return true
+							}
+							receiver, ok := sel.X.(*ast.Ident)
+							if !ok || receiver.Name != "a" || len(call.Args) != 3 || !completionArgZero(call.Args[1]) || len(clause.List) == 0 {
+								t.Fatal("unrecognized cloudMutation dispatch")
+							}
+							sharedMutation = true
+							return true
+						})
+					}
 					for _, expr := range clause.List {
 						name := literal(expr)
+						if sharedMutation {
+							mutationAliases = append(mutationAliases, name)
+						}
 						switch name {
 						case "-h", "--help":
 							name = "help"
@@ -73,6 +118,12 @@ func TestCompletionDrift(t *testing.T) {
 				}
 			}
 		}
+	}
+	if team == nil {
+		t.Fatal("team dispatch missing")
+	}
+	testCompletionTeamDispatch(t, team, literal)
+	for _, fn := range functions {
 		ast.Inspect(fn.Body, func(node ast.Node) bool {
 			var statements []ast.Stmt
 			switch n := node.(type) {
@@ -110,10 +161,17 @@ func TestCompletionDrift(t *testing.T) {
 					case *ast.BasicLit:
 						names = []string{literal(arg)}
 					case *ast.Ident:
-						if fn.Name.Name != "importSession" || arg.Name != "name" {
+						switch {
+						case fn.Name.Name == "importSession" && arg.Name == "name":
+							names = []string{"import", "continue"}
+						case fn.Name.Name == "cloudMutation" && arg.Name == "op":
+							if len(mutationAliases) == 0 {
+								t.Fatal("cloudMutation dispatch aliases missing")
+							}
+							names = mutationAliases
+						default:
 							t.Fatalf("unrecognized dynamic newFlags in %s", fn.Name.Name)
 						}
-						names = []string{"import", "continue"}
 					default:
 						t.Fatalf("unrecognized newFlags argument %T", arg)
 					}
@@ -138,7 +196,7 @@ func TestCompletionDrift(t *testing.T) {
 								return true
 							}
 							switch sel.Sel.Name {
-							case "Bool", "String", "Int", "Int64":
+							case "Bool", "String", "Int", "Int64", "Duration":
 								if len(invocation.Args) == 0 {
 									t.Fatal("flag declaration without name")
 								}
@@ -170,17 +228,19 @@ func TestCompletionDrift(t *testing.T) {
 			return true
 		})
 	}
-	ast.Inspect(parsed, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
+	for _, parsed := range files {
+		ast.Inspect(parsed, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			id, ok := call.Fun.(*ast.Ident)
+			if ok && id.Name == "newFlags" && !handled[call] {
+				t.Fatal("newFlags construction not accounted for")
+			}
 			return true
-		}
-		id, ok := call.Fun.(*ast.Ident)
-		if ok && id.Name == "newFlags" && !handled[call] {
-			t.Fatal("newFlags construction not accounted for")
-		}
-		return true
-	})
+		})
+	}
 	expectedCommands := map[string]bool{}
 	eachCommand(func(name string, c commandSpec) {
 		if expectedCommands[name] {
@@ -215,14 +275,9 @@ func TestCompletionDrift(t *testing.T) {
 			t.Errorf("flag set %q missing from spec", name)
 		}
 	}
-	completion, err := parser.ParseFile(token.NewFileSet(), "completion.go", nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
 	shells := []string{}
-	for _, decl := range completion.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "completion" {
+	for _, fn := range functions {
+		if fn.Name.Name != "completion" {
 			continue
 		}
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -240,6 +295,66 @@ func TestCompletionDrift(t *testing.T) {
 	slices.Sort(expectedShells)
 	if !slices.Equal(shells, expectedShells) {
 		t.Fatalf("shell dispatch drift: %v != %v", shells, expectedShells)
+	}
+}
+
+func completionArgZero(expr ast.Expr) bool {
+	index, ok := expr.(*ast.IndexExpr)
+	if !ok {
+		return false
+	}
+	args, ok := index.X.(*ast.Ident)
+	if !ok || args.Name != "args" {
+		return false
+	}
+	zero, ok := index.Index.(*ast.BasicLit)
+	return ok && zero.Kind == token.INT && zero.Value == "0"
+}
+
+// Team has one flat flag set. Its dispatch is specifically a switch on args[0]
+// plus literal ==/!= comparisons; fail if that shape changes instead of trying
+// to infer arbitrary control flow or silently losing an enum member.
+func testCompletionTeamDispatch(t *testing.T, fn *ast.FuncDecl, literal func(ast.Expr) string) {
+	t.Helper()
+	commands := map[string]bool{}
+	handled := map[ast.Expr]bool{}
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		switch n := node.(type) {
+		case *ast.SwitchStmt:
+			if completionArgZero(n.Tag) {
+				handled[n.Tag] = true
+				for _, stmt := range n.Body.List {
+					for _, expr := range stmt.(*ast.CaseClause).List {
+						commands[literal(expr)] = true
+					}
+				}
+			}
+		case *ast.BinaryExpr:
+			if completionArgZero(n.X) || completionArgZero(n.Y) {
+				if !completionArgZero(n.X) || (n.Op != token.EQL && n.Op != token.NEQ) {
+					t.Fatal("unrecognized team dispatch comparison")
+				}
+				handled[n.X] = true
+				commands[literal(n.Y)] = true
+			}
+		}
+		return true
+	})
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		if expr, ok := node.(ast.Expr); ok && completionArgZero(expr) && !handled[expr] {
+			t.Fatal("unrecognized team dispatch use of args[0]")
+		}
+		return true
+	})
+	expected := map[string]bool{}
+	for _, name := range completionTeamCommands {
+		if expected[name] {
+			t.Fatalf("duplicate team completion %q", name)
+		}
+		expected[name] = true
+	}
+	if !reflect.DeepEqual(commands, expected) {
+		t.Errorf("team dispatch drift: CLI %v, completion %v", commands, expected)
 	}
 }
 
@@ -361,6 +476,37 @@ func TestBashCompletion(t *testing.T) {
 		{name: "after terminator query", words: []string{"moirai", "search", "--", ""}, empty: true},
 		{name: "continue file", words: []string{"moirai", "continue", "--", "a "}, want: []string{"a file.json"}},
 		{name: "shell enum", words: []string{"moirai", "completion", ""}, want: completionShells},
+		{name: "cloud commands", words: []string{"moirai", ""}, want: []string{"login", "logout", "whoami", "doctor", "publish", "pull", "fork", "unpublish", "cloud-delete", "invite", "team"}},
+		{name: "login flags", words: []string{"moirai", "login", "--"}, want: []string{"--server"}},
+		{name: "login value", words: []string{"moirai", "login", "--server", ""}, empty: true},
+		{name: "doctor flags", words: []string{"moirai", "doctor", "--"}, want: []string{"--json"}},
+		{name: "publish flags", words: []string{"moirai", "publish", "--"}, want: []string{"--from", "--visibility", "--expires", "--parent", "--team", "--yes", "--preview-out", "--include-thinking", "--idempotency-key"}},
+		{name: "publish format", words: []string{"moirai", "publish", "--from", "co"}, want: []string{"codex", "cowork"}},
+		{name: "duration value", words: []string{"moirai", "publish", "--expires", ""}, empty: true},
+		{name: "duration equals", words: []string{"moirai", "publish", "--expires="}, empty: true},
+		{name: "duration consumes value", words: []string{"moirai", "publish", "--expires", "24h", "--"}, want: []string{"--preview-out", "--yes"}},
+		{name: "visibility value", words: []string{"moirai", "publish", "--visibility", ""}, empty: true},
+		{name: "preview file", words: []string{"moirai", "publish", "--preview-out", "a"}, want: []string{"a file.json"}},
+		{name: "publish file", words: []string{"moirai", "publish", "a"}, want: []string{"a file.json"}},
+		{name: "pull file", words: []string{"moirai", "pull", "--out", "a"}, want: []string{"a file.json"}},
+		{name: "fork flags", words: []string{"moirai", "fork", "ID", "--"}, want: []string{"--yes"}},
+		{name: "unpublish flags", words: []string{"moirai", "unpublish", "ID", "--"}, want: []string{"--yes", "--login"}},
+		{name: "cloud delete flags", words: []string{"moirai", "cloud-delete", "ID", "--"}, want: []string{"--yes", "--login"}},
+		{name: "invite flags", words: []string{"moirai", "invite", "ID", "--"}, want: []string{"--yes", "--login"}},
+		{name: "mutation bool", words: []string{"moirai", "unpublish", "ID", "--yes", "--"}, want: []string{"--login"}},
+		{name: "mutation value", words: []string{"moirai", "invite", "ID", "--login", ""}, empty: true},
+		{name: "import flags", words: []string{"moirai", "import", "--"}, want: []string{"--dry-run", "--json"}},
+		{name: "continue flags", words: []string{"moirai", "continue", "--"}, want: []string{"--dry-run", "--json"}},
+		{name: "import bool", words: []string{"moirai", "import", "--dry-run", "--"}, want: []string{"--json", "--from"}},
+		{name: "continue bool", words: []string{"moirai", "continue", "--json", "--"}, want: []string{"--dry-run", "--with"}},
+		{name: "team enum", words: []string{"moirai", "team", ""}, want: []string{"list", "create", "members", "invite", "remove", "--user", "--role"}},
+		{name: "team name", words: []string{"moirai", "team", "create", ""}, absent: completionTeamCommands},
+		{name: "team flags", words: []string{"moirai", "team", "invite", "ID", "--"}, want: []string{"--user", "--role"}},
+		{name: "team flags before ID", words: []string{"moirai", "team", "invite", "--"}, want: []string{"--user", "--role"}},
+		{name: "team user", words: []string{"moirai", "team", "invite", "ID", "--user", ""}, empty: true},
+		{name: "team value collision", words: []string{"moirai", "team", "invite", "ID", "--user", "create", "--"}, want: []string{"--role"}, absent: []string{"--from", "--out"}},
+		{name: "team value position", words: []string{"moirai", "team", "--user", "create", ""}, want: completionTeamCommands},
+		{name: "team terminator", words: []string{"moirai", "team", "invite", "--", ""}, empty: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -392,6 +538,9 @@ func TestNativeCompletion(t *testing.T) {
 		t.Run(shell, func(t *testing.T) {
 			executable, err := exec.LookPath(shell)
 			if err != nil {
+				if os.Getenv("MOIRAI_REQUIRE_NATIVE_COMPLETION") == "1" {
+					t.Fatal(shell + " is required for native completion tests")
+				}
 				t.Skip(shell + " unavailable")
 			}
 			dir := completionSandbox(t)
@@ -425,6 +574,36 @@ func TestNativeCompletion(t *testing.T) {
 				{line: "moirai convert -- --from co", absent: []string{"codex", "cowork", "--from=codex", "--from=cowork"}},
 				{line: "moirai search --limit ", empty: true},
 				{line: "moirai inspect a", want: []string{"a file.json"}},
+				{line: "moirai ", want: []string{"login", "logout", "whoami", "doctor", "publish", "pull", "fork", "unpublish", "cloud-delete", "invite", "team"}},
+				{line: "moirai login --", want: []string{"--server"}},
+				{line: "moirai login --server ", empty: true},
+				{line: "moirai doctor --", want: []string{"--json"}},
+				{line: "moirai publish --", want: []string{"--from", "--visibility", "--expires", "--parent", "--team", "--yes", "--preview-out", "--include-thinking", "--idempotency-key"}},
+				{line: "moirai publish --from co", want: []string{"codex", "cowork"}},
+				{line: "moirai publish --expires ", empty: true},
+				{line: "moirai publish --expires=", empty: true},
+				{line: "moirai publish --expires 24h --", want: []string{"--preview-out", "--yes"}},
+				{line: "moirai publish --visibility ", empty: true},
+				{line: "moirai publish --preview-out a", want: []string{"a file.json"}},
+				{line: "moirai publish a", want: []string{"a file.json"}},
+				{line: "moirai pull --out a", want: []string{"a file.json"}},
+				{line: "moirai fork ID --", want: []string{"--yes"}},
+				{line: "moirai unpublish ID --", want: []string{"--yes", "--login"}},
+				{line: "moirai cloud-delete ID --", want: []string{"--yes", "--login"}},
+				{line: "moirai invite ID --", want: []string{"--yes", "--login"}},
+				{line: "moirai unpublish ID --yes --", want: []string{"--login"}},
+				{line: "moirai invite ID --login ", empty: true},
+				{line: "moirai import --", want: []string{"--dry-run", "--json"}},
+				{line: "moirai continue --", want: []string{"--dry-run", "--json"}},
+				{line: "moirai import --dry-run --", want: []string{"--json", "--from"}},
+				{line: "moirai continue --json --", want: []string{"--dry-run", "--with"}},
+				{line: "moirai team ", want: completionTeamCommands},
+				{line: "moirai team create ", absent: completionTeamCommands},
+				{line: "moirai team invite ID --", want: []string{"--user", "--role"}},
+				{line: "moirai team invite --", want: []string{"--user", "--role"}},
+				{line: "moirai team invite ID --user ", empty: true},
+				{line: "moirai team invite ID --user create --", want: []string{"--role"}, absent: []string{"--from", "--out"}},
+				{line: "moirai team invite -- ", empty: true},
 			}
 			for _, tt := range tests {
 				t.Run(tt.line, func(t *testing.T) {
@@ -463,16 +642,28 @@ func zshCandidates(t *testing.T, executable, dir, script, line string) []string 
 	t.Helper()
 	fixtureDir := t.TempDir()
 	result := filepath.Join(fixtureDir, "result")
-	done := filepath.Join(fixtureDir, "done")
 	setup := filepath.Join(fixtureDir, "setup.zsh")
 	fixture := `fpath=( ` + shellQuote(filepath.Dir(script)) + ` $fpath )
 autoload -Uz compinit
-compinit -D
+compinit -u -D
+if [[ ${_comps[moirai]-} != _moirai ]]; then
+    print -r -- "wrong moirai completion handler: ${_comps[moirai]-<unset>}"
+    autoload -Uz compaudit
+    compaudit
+    exit 1
+fi
 compadd() {
     local -a matches
-    builtin compadd -A matches "$@"
-    collected+=( "${(@Q)matches}" )
+    local before=$compstate[nmatches] ret
     builtin compadd "$@"
+    ret=$?
+    # _arguments also uses compadd to query arrays without offering matches.
+    # Probe only real additions, so queries do not filter those arrays twice.
+    if (( compstate[nmatches] > before )); then
+        builtin compadd -A matches "$@"
+        collected+=( "${(@Q)matches}" )
+    fi
+    return $ret
 }
 _capture() {
     collected=()
@@ -482,7 +673,7 @@ _capture() {
     else
         : > ` + shellQuote(result) + `
     fi
-    : > ` + shellQuote(done) + `
+    print -r -- '__MOIRAI_END__'
 }
 _run_capture() {
     BUFFER=` + shellQuote(line) + `
@@ -491,29 +682,55 @@ _run_capture() {
 }
 zle -C _capture complete-word _capture
 zle -N _run_capture
+bindkey -e
 bindkey '^X' _run_capture
+_ready() { print -r -- '__MOIRAI_READY__'; }
+zle -N zle-line-init _ready
 `
 	if err := os.WriteFile(setup, []byte(fixture), 0600); err != nil {
 		t.Fatal(err)
 	}
 	driver := `zmodload zsh/zpty || exit 1
-zpty worker ` + shellQuote(executable) + ` -f
-zpty -w worker ` + shellQuote("source "+shellQuote(setup)) + `
-zpty -w -n worker $'\x18'
-for ((i=0; i<100; i++)); do
-    [[ -f ` + shellQuote(done) + ` ]] && break
-    sleep 0.05
-done
-zpty -r worker output '*' 2>/dev/null
-zpty -d worker
-[[ -f ` + shellQuote(done) + ` ]] || { print -r -- "$output"; exit 1; }
+zmodload zsh/datetime || exit 1
+zpty -b worker ` + shellQuote(executable) + ` -f || exit 1
+trap 'zpty -d worker 2>/dev/null' EXIT
+transcript=''
+wait_marker() {
+    local marker=$1 chunk
+    local -F deadline=$(( EPOCHREALTIME + 5 ))
+    while (( EPOCHREALTIME < deadline )); do
+        # No pattern read: partial output and child exit must not count as a
+        # marker. Stream every chunk to Go even while waiting for more output.
+        if zpty -r -t worker chunk; then
+            transcript+=$chunk
+            print -rn -- "$chunk"
+            [[ $transcript == *$marker* ]] && return 0
+        else
+            if ! zpty -t worker; then
+                print -r -- "child exited before $marker"
+                return 1
+            fi
+            sleep 0.01
+        fi
+    done
+    print -r -- "timed out waiting for $marker"
+    return 1
+}
+zpty -w worker ` + shellQuote("source "+shellQuote(setup)) + ` || exit 1
+wait_marker '__MOIRAI_READY__' || exit 1
+zpty -w -n worker $'\x18' || exit 1
+wait_marker '__MOIRAI_END__' || exit 1
 `
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Normal timeouts exit the driver and run its zpty cleanup. The longer Go
+	// deadline is only an emergency kill; it does not guarantee child cleanup.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, executable, "-f", "-c", driver)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.WaitDelay = time.Second
 	if data, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("zsh ZLE harness: %v: %s", err, data)
+		t.Fatalf("zsh ZLE harness: %v (context: %v): %s", err, ctx.Err(), data)
 	}
 	data, err := os.ReadFile(result)
 	if err != nil {

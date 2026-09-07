@@ -33,14 +33,24 @@ type commandSpec struct {
 var completionCommands = []commandSpec{
 	{name: "help"}, {name: "version"},
 	{name: "formats", flags: []flagSpec{{"json", boolValue}}},
+	{name: "doctor", flags: []flagSpec{{"json", boolValue}}},
+	{name: "login", flags: []flagSpec{{"server", opaqueValue}}},
+	{name: "logout"}, {name: "whoami"},
+	{name: "team", positional: "team-subcommand", flags: []flagSpec{{"user", opaqueValue}, {"role", opaqueValue}}},
+	{name: "publish", positional: "file-or-id", flags: []flagSpec{{"from", formatValue}, {"visibility", opaqueValue}, {"expires", opaqueValue}, {"parent", opaqueValue}, {"team", opaqueValue}, {"yes", boolValue}, {"preview-out", fileValue}, {"include-thinking", boolValue}, {"idempotency-key", opaqueValue}}},
+	{name: "pull", flags: []flagSpec{{"out", fileValue}}},
+	{name: "fork", flags: []flagSpec{{"yes", boolValue}}},
+	{name: "unpublish", flags: []flagSpec{{"yes", boolValue}, {"login", opaqueValue}}},
+	{name: "cloud-delete", flags: []flagSpec{{"yes", boolValue}, {"login", opaqueValue}}},
+	{name: "invite", flags: []flagSpec{{"yes", boolValue}, {"login", opaqueValue}}},
 	{name: "inspect", positional: "file", flags: []flagSpec{{"from", formatValue}, {"json", boolValue}, {"max-input-bytes", opaqueValue}}},
 	{name: "convert", positional: "file", flags: []flagSpec{{"from", formatValue}, {"to", formatValue}, {"out", fileValue}, {"max-input-bytes", opaqueValue}}},
 	{name: "list", flags: []flagSpec{{"format", formatValue}, {"json", boolValue}, {"max-input-bytes", opaqueValue}}},
 	{name: "show", positional: "sessionID", flags: []flagSpec{{"format", formatValue}, {"json", boolValue}, {"thinking", boolValue}, {"tools", boolValue}, {"max-input-bytes", opaqueValue}}},
 	{name: "search", positional: "query", flags: []flagSpec{{"format", formatValue}, {"limit", opaqueValue}, {"json", boolValue}, {"max-input-bytes", opaqueValue}}},
 	{name: "export", positional: "sessionID", flags: []flagSpec{{"format", formatValue}, {"out", fileValue}, {"max-input-bytes", opaqueValue}}},
-	{name: "import", positional: "file", flags: []flagSpec{{"from", formatValue}, {"to", formatValue}, {"with", formatValue}, {"no-launch", boolValue}, {"max-input-bytes", opaqueValue}}},
-	{name: "continue", positional: "file-or-id", flags: []flagSpec{{"from", formatValue}, {"to", formatValue}, {"with", formatValue}, {"no-launch", boolValue}, {"max-input-bytes", opaqueValue}}},
+	{name: "import", positional: "file", flags: []flagSpec{{"from", formatValue}, {"to", formatValue}, {"with", formatValue}, {"no-launch", boolValue}, {"dry-run", boolValue}, {"json", boolValue}, {"max-input-bytes", opaqueValue}}},
+	{name: "continue", positional: "file-or-id", flags: []flagSpec{{"from", formatValue}, {"to", formatValue}, {"with", formatValue}, {"no-launch", boolValue}, {"dry-run", boolValue}, {"json", boolValue}, {"max-input-bytes", opaqueValue}}},
 	{name: "delete", positional: "sessionID", flags: []flagSpec{{"format", formatValue}, {"yes", boolValue}, {"max-input-bytes", opaqueValue}}},
 	{name: "archive", positional: "archive-subcommand", subcommands: []commandSpec{
 		{name: "create", positional: "file", flags: []flagSpec{{"from", formatValue}, {"out", fileValue}, {"max-input-bytes", opaqueValue}}},
@@ -49,6 +59,7 @@ var completionCommands = []commandSpec{
 	{name: "completion", positional: "shell-enum"},
 }
 var completionShells = []string{"bash", "zsh", "fish"}
+var completionTeamCommands = []string{"list", "create", "members", "invite", "remove"}
 
 func (a app) completion(args []string) error {
 	if len(args) != 1 {
@@ -106,7 +117,7 @@ _moirai_flag_kind() {
 }
 _moirai() {
     local cur="${COMP_WORDS[COMP_CWORD]}" context="${COMP_WORDS[1]}"
-    local word name kind pending='' ended=0 prefix='' choices='' positional='' candidate i
+    local word name kind pending='' ended=0 prefix='' choices='' positional='' position=0 candidate i
     COMPREPLY=()
     if (( COMP_CWORD == 1 )); then
 `)
@@ -132,6 +143,7 @@ _moirai() {
             fi
             # Only archive's first bare argument can select a subcommand.
             if [[ $context == archive ]]; then context="archive $word"; fi
+            (( ++position ))
         done
         if (( ! ended )); then
             if [[ -n $pending ]]; then
@@ -166,7 +178,11 @@ _moirai() {
 		if c.positional == "shell-enum" {
 			choices = strings.Join(completionShells, " ")
 		}
-		fmt.Fprintf(&b, "                    %s) choices=%s; positional=%s ;;\n", shellQuote(name), shellQuote(choices), shellQuote(c.positional))
+		fmt.Fprintf(&b, "                    %s) choices=%s; positional=%s", shellQuote(name), shellQuote(choices), shellQuote(c.positional))
+		if c.positional == "team-subcommand" {
+			fmt.Fprintf(&b, "; if (( position == 0 )); then choices+=%s; fi", shellQuote(" "+strings.Join(completionTeamCommands, " ")))
+		}
+		b.WriteString(" ;;\n")
 	})
 	b.WriteString(`                esac
             fi
@@ -254,6 +270,8 @@ _moirai() {
 			positional = "1:shell:(" + strings.Join(completionShells, " ") + ")"
 		case "archive-subcommand":
 			positional = "1:subcommand:(" + commandNames(c.subcommands) + ")"
+		case "team-subcommand":
+			positional = "1:subcommand:(" + strings.Join(completionTeamCommands, " ") + ")"
 		}
 		fmt.Fprintf(&b, "                %s\n            ;;\n", shellQuote(positional))
 	})
@@ -342,6 +360,8 @@ complete -c moirai -f
 			fmt.Fprintf(&b, "complete -c moirai -n %s -a %s\n", shellQuote(condition+"; and __moirai_position options"), shellQuote(strings.Join(completionShells, " ")))
 		case "archive-subcommand":
 			fmt.Fprintf(&b, "complete -c moirai -n %s -a %s\n", shellQuote(condition+"; and __moirai_position options"), shellQuote(commandNames(c.subcommands)))
+		case "team-subcommand":
+			fmt.Fprintf(&b, "complete -c moirai -n %s -a %s\n", shellQuote(condition+"; and test (count (commandline -opc)) -eq 2"), shellQuote(strings.Join(completionTeamCommands, " ")))
 		}
 	})
 	return b.String()
