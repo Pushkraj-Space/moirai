@@ -26,6 +26,12 @@ currently populate `extra` or `unknown` for all discarded fields.
 | ChatGPT export | active-branch text, calls/results, reasoning, model and title | hidden UI messages, alternate branches, citations and product-specific metadata |
 | Simple JSON | every schema `1.0` field | unknown object fields are rejected by archives; unsupported native targets warn on omission |
 
+The canonical schema can represent per-event timestamps, tool error status, and
+turn stop reasons. Grok writes these fields into `updates`, but its current reader
+consumes only `chat_history` and `summary`. On reparse, message timestamps fall
+back to the session timestamp, tool results lose error status, and stop reasons
+are dropped, with no dedicated warning.
+
 Claude Code store discovery and writes honor `CLAUDE_CONFIG_DIR`; otherwise the
 store root is `~/.claude/projects`.
 
