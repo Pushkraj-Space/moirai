@@ -45,7 +45,7 @@ var completionCommands = []commandSpec{
 	{name: "invite", flags: []flagSpec{{"yes", boolValue}, {"login", opaqueValue}}},
 	{name: "inspect", positional: "file", flags: []flagSpec{{"from", formatValue}, {"json", boolValue}, {"max-input-bytes", opaqueValue}}},
 	{name: "convert", positional: "file", flags: []flagSpec{{"from", formatValue}, {"to", formatValue}, {"out", fileValue}, {"max-input-bytes", opaqueValue}}},
-	{name: "list", flags: []flagSpec{{"format", formatValue}, {"json", boolValue}, {"max-input-bytes", opaqueValue}}},
+	{name: "list", flags: []flagSpec{{"format", formatValue}, {"cwd", fileValue}, {"since", opaqueValue}, {"until", opaqueValue}, {"limit", opaqueValue}, {"json", boolValue}, {"max-input-bytes", opaqueValue}}},
 	{name: "show", positional: "sessionID", flags: []flagSpec{{"format", formatValue}, {"json", boolValue}, {"thinking", boolValue}, {"tools", boolValue}, {"max-input-bytes", opaqueValue}}},
 	{name: "search", positional: "query", flags: []flagSpec{{"format", formatValue}, {"limit", opaqueValue}, {"json", boolValue}, {"max-input-bytes", opaqueValue}}},
 	{name: "export", positional: "sessionID", flags: []flagSpec{{"format", formatValue}, {"out", fileValue}, {"max-input-bytes", opaqueValue}}},

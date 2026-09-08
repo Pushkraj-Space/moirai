@@ -6,6 +6,7 @@ by `schema_version`.
 
 ## 0.2.0 (unreleased)
 
+- Add `--cwd`, `--since`, `--until`, and `--limit` filters to `moirai list`.
 - Raise the source-build Go requirement to 1.26.8.
 
 - Keep the hosted backend, website, and deployment tooling in a separate private
