@@ -198,6 +198,70 @@ moirai continue 'SESSION_ID#12-38' --from claude_code --with pi
 Each cross-harness handoff receives a fresh session ID and provenance pointing
 to its source. The original session is not modified.
 
+## Troubleshooting
+
+`moirai doctor` reports, for every supported harness, whether its executable is
+on `PATH`, where Moirai expects its session store, which environment variables
+relocate that store, and whether the store root exists and can be read and
+written by the current account:
+
+```bash
+moirai doctor
+moirai doctor --json
+```
+
+Each harness prints one block:
+
+```text
+codex  Codex  read,write,discover,continue
+  executable: codex (not on PATH)
+  store: /home/me/.codex/sessions (set CODEX_HOME to override)
+  status: missing
+  warning: codex is not on PATH; install Codex or add it to PATH (executable_missing)
+  warning: /home/me/.codex/sessions: store root does not exist; run Codex once, or set CODEX_HOME if its data lives elsewhere (store_missing)
+```
+
+The `executable` line appears only for harnesses Moirai can launch and reports
+whether the launcher is on `PATH`. On macOS and Windows the Claude Cowork line
+therefore reflects the `open` or `cmd` launcher, not a verified installation.
+The `store` line shows the resolved root and names the override variable that
+is set, or the variables that would override it. Harnesses without a local
+store (`simple`, `claude_chat`, `chatgpt`) show `store: none`.
+
+The `status` line combines a read phrase with, for stores Moirai can save into,
+a write phrase:
+
+| Status | Meaning | Fix |
+|---|---|---|
+| `missing` | The store root does not exist. | Run the harness once so it creates its data directory, or set the named variable if the data lives elsewhere. |
+| `unknown` | The root could not be inspected, usually because a parent directory denies access. | Check the ownership and permissions of the parent directories. |
+| `wrong type` | A file sits where a directory is expected, a directory where a database file is expected, or the path is a pipe, socket, or device. Doctor never opens such a path. | Move the entry aside, or point the override variable at the real store. |
+| `not readable` | The root exists but cannot be opened. | Fix its ownership or permissions. |
+| `readable` | The root can be opened. | |
+| `writable`, `not writable` | Whether the current account may create entries in the root. | Fix its ownership or permissions. |
+| `write access not checked` | Write permission is not queried on this platform (Windows). | Run an import; it reports any permission error. |
+
+Warnings carry one of these codes: `executable_missing`, `store_missing`,
+`store_stat_failed`, `store_wrong_type`, `store_unreadable`, and
+`store_unwritable`.
+
+`moirai doctor --json` emits an array with one object per harness holding
+`format`, `display_name`, `capabilities`, `executable`, `installed`, `store`,
+`store_overrides`, `active_override`, `exists`, `readable`, `writable`, and
+`warnings`. A key is absent when its check is unknown or does not apply, so
+scripts should test for presence rather than assume `false`. JSON keeps paths
+and error text verbatim; the human report scrubs terminal control characters.
+
+Doctor is read-only. It stats and opens store roots but never lists
+directories, reads transcripts, writes files, or touches the network, and it
+does not print environment-variable values on their own (a resolved store path
+does reveal the value of the active override). Write permission is queried with
+`access(2)` rather than tested by writing, so it is advisory for the account
+running doctor: it uses real credentials, always succeeds for root, and does not
+cover nested destination directories, disk space, or a harness's own import.
+Database-file stores are never write-checked; OpenCode saves go through
+`opencode import`, and Hermes is source-only.
+
 ## Supported formats
 
 `read` parses native data into the canonical model. `write` renders native

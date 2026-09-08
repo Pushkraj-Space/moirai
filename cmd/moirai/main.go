@@ -180,25 +180,29 @@ func (a app) formats(args []string) error {
 		return writeJSON(a.out, infos)
 	}
 	for _, info := range infos {
-		capabilities := []string{}
-		if info.Capability.Read {
-			capabilities = append(capabilities, "read")
-		}
-		if info.Capability.Write {
-			capabilities = append(capabilities, "write")
-		}
-		if info.Capability.Discover {
-			capabilities = append(capabilities, "discover")
-		}
-		if info.Capability.Continue {
-			capabilities = append(capabilities, "continue")
-		}
-		if info.Capability.SourceOnly {
-			capabilities = append(capabilities, "source-only")
-		}
-		fmt.Fprintf(a.out, "%-18s %-22s %s\n", info.Format, info.DisplayName, strings.Join(capabilities, ","))
+		fmt.Fprintf(a.out, "%-18s %-22s %s\n", info.Format, info.DisplayName, strings.Join(capabilityNames(info.Capability), ","))
 	}
 	return nil
+}
+
+func capabilityNames(capability moirai.Capability) []string {
+	names := []string{}
+	if capability.Read {
+		names = append(names, "read")
+	}
+	if capability.Write {
+		names = append(names, "write")
+	}
+	if capability.Discover {
+		names = append(names, "discover")
+	}
+	if capability.Continue {
+		names = append(names, "continue")
+	}
+	if capability.SourceOnly {
+		names = append(names, "source-only")
+	}
+	return names
 }
 
 func (a app) inspect(args []string) error {
