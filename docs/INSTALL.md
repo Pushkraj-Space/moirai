@@ -2,8 +2,9 @@
 
 The release workflow builds Linux amd64/arm64, macOS amd64/arm64, and Windows
 amd64 archives from the tagged commit. Starting with v0.2.0, download the matching
-archive and `SHA256SUMS` from the release page. These assets become available only
-after a maintainer publishes the new tag; v0.1.2 has no binary assets.
+archive and `SHA256SUMS` from [GitHub Releases](https://github.com/october-dev/moirai/releases).
+These assets become available only after a maintainer publishes the new tag;
+v0.1.2 has no binary assets.
 
 Verify with `sha256sum --check SHA256SUMS --ignore-missing` on Linux. On macOS use
 `shasum -a 256 FILE.tar.gz` and compare it to the exact filename's digest. On
@@ -42,18 +43,61 @@ reserving a session ID in storage, or starting a process. Rendering tests format
 compatibility; it cannot prove the destination application's current version
 will accept a newly written native session.
 
-## Reproducing packages
+## Reproducing and verifying an artifact
 
-From the tagged commit, with Go and Node installed:
+The release workflow runs only for numeric `vN.N.N` tags; prerelease tags do not
+trigger it, including npm publication. CLI release assets are published only from
+`october-dev/moirai`.
+
+Start from a clean checkout of the release tag, with Go, Node, and the GitHub CLI
+(`gh`) installed. Go embeds `vcs.modified` in the binary: tracked changes or
+non-ignored untracked files set it to `true` and change the binary digest. Keep
+downloaded archives and extraction directories outside the checkout or under the
+git-ignored `dist/`.
+
+For example, to check a Linux amd64 artifact after v0.2.0 is released:
 
 ```sh
-node .github/scripts/package.mjs
+git clone --branch v0.2.0 https://github.com/october-dev/moirai.git moirai-v0.2.0
+cd moirai-v0.2.0
+git status --porcelain --untracked-files=all
+
+mkdir -p dist/verify/download dist/verify/released dist/verify/local
+gh release download v0.2.0 --repo october-dev/moirai \
+  --pattern moirai_0.2.0_linux_amd64.tar.gz --pattern SHA256SUMS \
+  --dir dist/verify/download
+(cd dist/verify/download && sha256sum --check SHA256SUMS --ignore-missing)
+tar -xzf dist/verify/download/moirai_0.2.0_linux_amd64.tar.gz -C dist/verify/released
+cat dist/verify/released/BUILD.txt
 ```
 
-Set `TARGET_OS` and `TARGET_ARCH` to cross-compile. Outputs include the CLI,
-license, Go module build information, an SPDX dependency inventory, and archive SHA-256. The package script
-executes the binary on matching native platforms to verify version/capabilities.
-Cross-compiled Linux arm64 packages require a separate real-machine smoke test.
+The status command should print nothing. Use the exact Go toolchain recorded in
+the released `BUILD.txt`; replace `go1.26.8` below if it differs. The `go 1.26.8`
+line in `go.mod` sets a minimum, so pin `GOTOOLCHAIN` explicitly and control the
+build environment:
+
+```sh
+GOTOOLCHAIN=go1.26.8 GOENV=off GOWORK=off GOFLAGS= GOEXPERIMENT= GOAMD64=v1 \
+  TARGET_OS=linux TARGET_ARCH=amd64 node .github/scripts/package.mjs
+tar -xzf dist/releases/moirai_0.2.0_linux_amd64.tar.gz -C dist/verify/local
+sha256sum dist/verify/local/moirai dist/verify/released/moirai
+```
+
+Compare the two binary digests. For other targets, use the same environment
+variables with matching `TARGET_OS`/`TARGET_ARCH`, archive names, and settings from
+`BUILD.txt`. On macOS use `shasum -a 256` to compare the extracted binaries; on
+Windows set the environment variables in your shell and use
+`Get-FileHash -Algorithm SHA256` on each extracted `moirai.exe`.
+
+Packages include the CLI, license, Go module build information, an SPDX dependency
+inventory, and an archive SHA-256 sidecar. The package script executes the binary
+on matching native platforms to verify its version and capabilities; CI uses a
+native runner for every release target.
+
+Archive digests are expected to differ because the SBOM includes a random UUID
+and timestamp, and tar metadata varies. Compare the extracted binary digest as
+a reproduction check, not a guarantee of reproducibility. If it differs, compare
+the tagged commit, checkout status, toolchain, and build settings in `BUILD.txt`.
 
 ## npm trusted publishing
 
