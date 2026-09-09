@@ -97,9 +97,11 @@ origin supplied by your operator; hosted deployment is not part of this repo.
 
 ## Install
 
-Prebuilt CLI archives, checksums, and provenance are produced by the v0.2.0+
-release workflow. See [installation instructions](docs/INSTALL.md). The npm
-package is the TypeScript SDK, not the native CLI.
+Download prebuilt CLI archives from [GitHub Releases](https://github.com/october-dev/moirai/releases)
+for Linux amd64/arm64, macOS amd64/arm64, and Windows amd64. Each release from
+v0.2.0 includes `SHA256SUMS` and provenance. See [installation instructions](docs/INSTALL.md)
+for verification and extraction. The npm package is the TypeScript SDK, not the
+native CLI.
 
 Go 1.26.8 or newer:
 
