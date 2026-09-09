@@ -167,7 +167,14 @@ List sessions that are already on the machine:
 ```bash
 moirai list
 moirai list --format claude_code
+moirai list --cwd ~/src/project --limit 5
+moirai list --since 2026-09-01T00:00:00Z --until 2026-09-08T00:00:00Z --json
 ```
+
+`--cwd` keeps sessions whose working directory is that path or a subdirectory
+of it. `--since` and `--until` are inclusive RFC 3339 bounds on a session's
+last-modified time, falling back to its start time; sessions with neither are
+excluded. `--limit` keeps the first N sessions in the list's existing order.
 
 Move one into another installed harness and launch it:
 
