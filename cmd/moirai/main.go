@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -117,7 +118,7 @@ Usage:
   moirai formats [--json]
   moirai inspect <file|-> [--from format] [--json]
   moirai convert <file|-> --to format [--from format] [--out file]
-  moirai list [--format format] [--json]
+  moirai list [--format format] [--cwd path] [--since rfc3339] [--until rfc3339] [--limit n] [--json]
   moirai show <session-id> --format format [--json]
   moirai search <query> [--format format] [--limit n] [--json]
   moirai export <session-id> --format format [--out file]
@@ -273,9 +274,17 @@ func stores() (*moirai.StoreRegistry, error) { return moirai.DefaultStores() }
 func (a app) list(ctx context.Context, args []string) error {
 	fs := newFlags("list", a.err)
 	format := fs.String("format", "", "filter format")
+	cwd := fs.String("cwd", "", "only sessions whose working directory is this path or below it")
+	since := fs.String("since", "", "only sessions modified at or after this RFC 3339 time")
+	until := fs.String("until", "", "only sessions modified at or before this RFC 3339 time")
+	limit := fs.String("limit", "", "print at most this many sessions")
 	asJSON := fs.Bool("json", false, "emit JSON")
 	maxInput := fs.Int64("max-input-bytes", 0, "maximum bytes per stored session")
 	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	filter, err := parseListFilter(*cwd, *since, *until, *limit)
+	if err != nil {
 		return err
 	}
 	registry, err := stores()
@@ -291,6 +300,7 @@ func (a app) list(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	refs = filter.apply(refs)
 	if *asJSON {
 		return writeJSON(a.out, map[string]any{"sessions": refs, "warnings": warnings})
 	}
@@ -301,6 +311,81 @@ func (a app) list(ctx context.Context, args []string) error {
 		fmt.Fprintln(a.err, "warning:", moirai.ScrubTerminal(warning.Message))
 	}
 	return nil
+}
+
+// listFilter narrows discovered sessions after the registry has ordered them.
+type listFilter struct {
+	cwd          string     // absolute and cleaned; "" leaves the filter inactive
+	since, until *time.Time // nil leaves the bound inactive; the zero instant is a valid bound
+	limit        int        // 0 means unlimited
+}
+
+func parseListFilter(cwd, since, until, limit string) (listFilter, error) {
+	var filter listFilter
+	var err error
+	if cwd != "" {
+		if filter.cwd, err = filepath.Abs(cwd); err != nil {
+			return listFilter{}, err
+		}
+	}
+	if filter.since, err = parseListTime("since", since); err != nil {
+		return listFilter{}, err
+	}
+	if filter.until, err = parseListTime("until", until); err != nil {
+		return listFilter{}, err
+	}
+	if filter.since != nil && filter.until != nil && filter.since.After(*filter.until) {
+		return listFilter{}, errors.New("--since must not be after --until")
+	}
+	if limit != "" {
+		n, err := strconv.Atoi(limit)
+		if err != nil || n <= 0 {
+			return listFilter{}, fmt.Errorf("invalid --limit %q: must be a positive integer", limit)
+		}
+		filter.limit = n
+	}
+	return filter, nil
+}
+
+func parseListTime(name, value string) (*time.Time, error) {
+	if value == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --%s %q: expected an RFC 3339 timestamp such as 2026-01-02T15:04:05Z", name, value)
+	}
+	return &parsed, nil
+}
+
+// apply keeps refs in their incoming order and stops once limit entries match.
+// Time bounds are inclusive and read the session's last-modified time, falling
+// back to its start time; a session with neither, or with a malformed
+// modified time, never matches an active bound.
+func (f listFilter) apply(refs []moirai.SessionRef) []moirai.SessionRef {
+	var out []moirai.SessionRef
+	for _, ref := range refs {
+		if f.cwd != "" && (ref.CWD == "" || !underDirectory(f.cwd, ref.CWD)) {
+			continue
+		}
+		if f.since != nil || f.until != nil {
+			modified, err := time.Parse(time.RFC3339, first(ref.ModifiedAt, ref.Timestamp))
+			if err != nil || f.since != nil && modified.Before(*f.since) || f.until != nil && modified.After(*f.until) {
+				continue
+			}
+		}
+		out = append(out, ref)
+		if f.limit > 0 && len(out) == f.limit {
+			break
+		}
+	}
+	return out
+}
+
+// underDirectory reports whether path is root itself or lies below it.
+func underDirectory(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func (a app) show(ctx context.Context, args []string) error {

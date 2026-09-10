@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	moirai "github.com/october-dev/moirai"
 )
@@ -414,5 +415,193 @@ func TestArchiveInspectRejects(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestListFilterApply(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "app")
+	elsewhere := filepath.Join(root, "other")
+	refs := []moirai.SessionRef{
+		{ID: "a", CWD: project, ModifiedAt: "2026-09-08T12:00:00Z"},
+		{ID: "b", CWD: filepath.Join(project, "pkg", "sub"), ModifiedAt: "2026-09-07T12:00:00Z"},
+		{ID: "c", CWD: project + "2", ModifiedAt: "2026-09-06T12:00:00Z"},
+		{ID: "d", ModifiedAt: "2026-09-05T12:00:00Z"},
+		{ID: "e", CWD: elsewhere, Timestamp: "2026-09-04T12:00:00Z"},
+		{ID: "f", CWD: elsewhere, ModifiedAt: "not-a-time", Timestamp: "2026-09-03T12:00:00Z"},
+		{ID: "g", CWD: elsewhere, ModifiedAt: "2026-09-02T12:00:00Z", Timestamp: "2026-01-01T00:00:00Z"},
+		{ID: "h", CWD: elsewhere, ModifiedAt: "2026-09-01T12:00:00.123456789Z"},
+		{ID: "i", CWD: elsewhere, ModifiedAt: "2026-08-31T17:30:00+05:30"},
+		{ID: "j", CWD: elsewhere},
+	}
+	all := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
+	cases := []struct {
+		name                     string
+		cwd, since, until, limit string
+		want                     []string
+	}{
+		{name: "no filter preserves order", want: all},
+		{name: "cwd matches the exact directory", cwd: filepath.Join(project, "pkg", "sub"), want: []string{"b"}},
+		{name: "cwd includes descendants", cwd: project, want: []string{"a", "b"}},
+		{name: "cwd accepts a trailing separator", cwd: project + string(filepath.Separator), want: []string{"a", "b"}},
+		{name: "cwd excludes a sibling sharing the prefix", cwd: project + "2", want: []string{"c"}},
+		{name: "cwd excludes sessions without a working directory", cwd: root, want: []string{"a", "b", "c", "e", "f", "g", "h", "i", "j"}},
+		{name: "since is inclusive", since: "2026-09-07T12:00:00Z", want: []string{"a", "b"}},
+		{name: "until is inclusive", until: "2026-09-02T12:00:00Z", want: []string{"g", "h", "i"}},
+		{name: "since and until form a window", since: "2026-09-03T00:00:00Z", until: "2026-09-06T00:00:00Z", want: []string{"d", "e"}},
+		{name: "until at the zero instant is an active bound", until: "0001-01-01T00:00:00Z"},
+		{name: "bounds fall back to timestamp and drop malformed or missing times", since: "0001-01-01T00:00:00Z", want: []string{"a", "b", "c", "d", "e", "g", "h", "i"}},
+		{name: "modified_at wins over a conflicting timestamp", since: "2026-09-02T12:00:00Z", until: "2026-09-02T12:00:00Z", want: []string{"g"}},
+		{name: "fractional seconds parse", since: "2026-09-01T12:00:00Z", until: "2026-09-01T13:00:00Z", want: []string{"h"}},
+		{name: "offsets compare as instants", since: "2026-08-31T12:00:00Z", until: "2026-08-31T12:00:00Z", want: []string{"i"}},
+		{name: "limit keeps the first entries in order", limit: "3", want: []string{"a", "b", "c"}},
+		{name: "limit above the result count keeps everything", limit: "99", want: all},
+		{name: "limit applies after the other filters", cwd: elsewhere, since: "2026-09-01T00:00:00Z", limit: "2", want: []string{"e", "g"}},
+		{name: "nothing matching returns nil", cwd: filepath.Join(root, "missing")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			filter, err := parseListFilter(tc.cwd, tc.since, tc.until, tc.limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := filter.apply(refs)
+			if tc.want == nil && got != nil {
+				t.Fatalf("got %#v, want nil", got)
+			}
+			ids := make([]string, len(got))
+			for i, ref := range got {
+				ids[i] = ref.ID
+			}
+			if !slices.Equal(ids, tc.want) {
+				t.Fatalf("got %v, want %v", ids, tc.want)
+			}
+		})
+	}
+}
+
+func TestListFilterParse(t *testing.T) {
+	failures := []struct {
+		name                     string
+		cwd, since, until, limit string
+		want                     string
+	}{
+		{name: "malformed since", since: "yesterday", want: "--since"},
+		{name: "date-only until", until: "2026-09-08", want: "--until"},
+		{name: "since after until", since: "2026-09-08T00:00:00Z", until: "2026-09-01T00:00:00Z", want: "--since must not be after --until"},
+		{name: "since after the zero instant", since: "0001-01-01T00:00:01Z", until: "0001-01-01T00:00:00Z", want: "--since must not be after --until"},
+		{name: "zero limit", limit: "0", want: "--limit"},
+		{name: "negative limit", limit: "-1", want: "--limit"},
+		{name: "non-numeric limit", limit: "abc", want: "--limit"},
+	}
+	for _, tc := range failures {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parseListFilter(tc.cwd, tc.since, tc.until, tc.limit)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	filter, err := parseListFilter("", "", "", "")
+	if err != nil || filter.cwd != "" || filter.since != nil || filter.until != nil || filter.limit != 0 {
+		t.Fatalf("empty flags: filter = %#v, err = %v", filter, err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative := strings.Join([]string{"sub", "..", "x"}, string(filepath.Separator))
+	filter, err = parseListFilter(relative, "2026-09-01T00:00:00Z", "2026-09-01T00:00:00Z", "5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filter.cwd != filepath.Join(wd, "x") || filter.since == nil || filter.until == nil || !filter.since.Equal(*filter.until) || filter.limit != 5 {
+		t.Fatalf("filter = %#v", filter)
+	}
+}
+
+func TestListFiltersOutput(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	sessions := filepath.Join(home, "pi-sessions")
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessions)
+	work := t.TempDir()
+	project := filepath.Join(work, "app")
+	elsewhere := filepath.Join(work, "other")
+	// Write order, lexical order, and modification order all differ so the
+	// assertions below can only pass through the registry's newest-first sort.
+	for _, s := range []struct {
+		id, cwd  string
+		modified time.Time
+	}{
+		{"gamma", project, time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)},
+		{"beta", elsewhere, time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)},
+		{"alpha", filepath.Join(project, "sub"), time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)},
+	} {
+		header, err := json.Marshal(map[string]any{"type": "session", "version": 3, "id": s.id, "timestamp": "2026-09-01T00:00:00Z", "cwd": s.cwd})
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(sessions, "--"+s.id+"--")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, s.id+".jsonl")
+		data := string(header) + "\n" + `{"type":"message","id":"m1","timestamp":"2026-09-01T00:00:01Z","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}` + "\n"
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, s.modified, s.modified); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run := func(t *testing.T, args ...string) string {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		a := app{out: &stdout, err: &stderr}
+		if err := a.run(context.Background(), append([]string{"list", "--format", "pi"}, args...)); err != nil {
+			t.Fatalf("%v: %v (stderr: %s)", args, err, stderr.String())
+		}
+		return stdout.String()
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"cwd", []string{"--cwd", project}, []string{"gamma", "alpha"}},
+		{"window", []string{"--since", "2026-09-04T00:00:00Z", "--until", "2026-09-06T00:00:00Z"}, []string{"gamma"}},
+		{"limit follows discovery order", []string{"--limit", "1"}, []string{"beta"}},
+		{"combined", []string{"--cwd", project, "--since", "2026-09-02T00:00:00Z", "--limit", "1"}, []string{"gamma"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var result struct {
+				Sessions []moirai.SessionRef `json:"sessions"`
+			}
+			if err := json.Unmarshal([]byte(run(t, append(tc.args, "--json")...)), &result); err != nil {
+				t.Fatal(err)
+			}
+			var ids []string
+			for _, ref := range result.Sessions {
+				ids = append(ids, ref.ID)
+			}
+			if !slices.Equal(ids, tc.want) {
+				t.Fatalf("got %v, want %v", ids, tc.want)
+			}
+		})
+	}
+	if out := run(t, "--cwd", filepath.Join(elsewhere, "nothing"), "--json"); !strings.Contains(out, `"sessions": null`) {
+		t.Fatalf("zero-match JSON = %s", out)
+	}
+	lines := strings.Split(strings.TrimSpace(run(t, "--cwd", elsewhere)), "\n")
+	if len(lines) != 1 || !strings.Contains(lines[0], "beta") {
+		t.Fatalf("human output = %q", lines)
+	}
+	var stdout, stderr bytes.Buffer
+	a := app{out: &stdout, err: &stderr}
+	err := a.run(context.Background(), []string{"list", "--format", "pi", "--limit", "0"})
+	if err == nil || !strings.Contains(err.Error(), "--limit") || stdout.Len() != 0 {
+		t.Fatalf("err = %v, stdout = %q", err, stdout.String())
 	}
 }
