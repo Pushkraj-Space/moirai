@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -242,7 +243,7 @@ func TestDoctorIsReadOnly(t *testing.T) {
 	before := snapshotTree(t, home)
 	result := runDoctor(t)
 	if after := snapshotTree(t, home); !slices.Equal(before, after) {
-		t.Fatalf("doctor changed the home tree:\nbefore %v\nafter  %v", before, after)
+		t.Fatalf("doctor changed the home tree:\nbefore %+v\nafter  %+v", before, after)
 	}
 	missing := 0
 	for _, row := range result.rows {
@@ -259,19 +260,39 @@ func TestDoctorIsReadOnly(t *testing.T) {
 	}
 }
 
-func snapshotTree(t *testing.T, root string) []string {
+// treeEntry records what a read-only command must leave untouched: the set of
+// paths, their modes, and the contents of regular files. Modification times
+// are excluded on purpose: NTFS propagates directory timestamps lazily, so a
+// walk immediately after creating fixtures can report different directory
+// times from a walk a moment later without anything having been written.
+type treeEntry struct {
+	Path    string
+	Mode    fs.FileMode
+	Size    int64
+	Content [sha256.Size]byte
+}
+
+func snapshotTree(t *testing.T, root string) []treeEntry {
 	t.Helper()
-	var entries []string
+	var entries []treeEntry
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		info, err := entry.Info()
+		info, err := os.Lstat(path)
 		if err != nil {
 			return err
 		}
 		rel, _ := filepath.Rel(root, path)
-		entries = append(entries, rel+"|"+info.Mode().String()+"|"+info.ModTime().String()+"|"+string(rune(info.Size())))
+		e := treeEntry{Path: rel, Mode: info.Mode(), Size: info.Size()}
+		if info.Mode().IsRegular() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			e.Content = sha256.Sum256(data)
+		}
+		entries = append(entries, e)
 		return nil
 	})
 	if err != nil {
