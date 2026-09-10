@@ -36,8 +36,13 @@ Homebrew tap and winget community submissions still require publication of the
 release URLs and checksums. Until those submissions are made, use the verified
 binary archive or Windows executable.
 
-`doctor --json` reports registered capabilities, executable availability and
-whether store roots can be opened. It never parses transcripts or probes writes.
+`doctor --json` reports registered capabilities, executable availability, whether
+each store root exists and can be opened, whether the current account may write
+to it (queried through `access(2)`, never probed by writing; not checked on
+Windows), and the environment variables that relocate each store. It never
+parses transcripts, lists directories, or writes. The README's
+[Troubleshooting](../README.md#troubleshooting) section explains every status
+and warning code.
 `continue --dry-run --json` renders the destination representation without saving,
 reserving a session ID in storage, or starting a process. Rendering tests format
 compatibility; it cannot prove the destination application's current version

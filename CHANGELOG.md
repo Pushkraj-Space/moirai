@@ -13,6 +13,9 @@ by `schema_version`.
   repository; retain the open-source core, CLI, SDK, and local sharing preparation.
 - Add local publish review/redaction, login/logout, pull, unpublish, cloud-delete,
   invitations, team commands, doctor, and import/continue dry-run previews.
+- Extend `doctor` with store existence, type, read, and write checks,
+  override-variable reporting, coded warnings, and a README troubleshooting
+  guide.
 - Accept verified `.moirai` archives directly in inspect/import/continue.
 - Add `moirai archive inspect` to verify an archive and print its metadata and
   block counts without printing conversation content.
