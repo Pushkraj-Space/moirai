@@ -14,6 +14,8 @@ by `schema_version`.
 - Add local publish review/redaction, login/logout, pull, unpublish, cloud-delete,
   invitations, team commands, doctor, and import/continue dry-run previews.
 - Accept verified `.moirai` archives directly in inspect/import/continue.
+- Add `moirai archive inspect` to verify an archive and print its metadata and
+  block counts without printing conversation content.
 - Add cross-platform binary packaging.
 - Prepare native release checksums/provenance and document npm trusted publishing.
 

@@ -126,7 +126,8 @@ Usage:
   moirai continue <file|session-id> --with format [--from format] [--no-launch] [--dry-run] [--json]
   moirai delete <session-id> --format format --yes
   moirai archive create <file|-> [--from format] --out file.moirai
-  moirai archive verify <file.moirai>`)
+  moirai archive verify <file.moirai>
+  moirai archive inspect <file.moirai> [--json]`)
 }
 
 func newFlags(name string, stderr io.Writer) *flag.FlagSet {
@@ -649,7 +650,7 @@ func (a app) delete(ctx context.Context, args []string) error {
 
 func (a app) archive(args []string) error {
 	if len(args) == 0 {
-		return errors.New("archive requires create or verify")
+		return errors.New("archive requires create, verify, or inspect")
 	}
 	switch args[0] {
 	case "create":
@@ -693,9 +694,143 @@ func (a app) archive(args []string) error {
 			return err
 		}
 		return writeJSON(a.out, map[string]any{"valid": true, "id": transcript.Meta.ID, "messages": len(transcript.Messages)})
+	case "inspect":
+		fs := newFlags("archive inspect", a.err)
+		asJSON := fs.Bool("json", false, "emit JSON")
+		maxInput := fs.Int64("max-input-bytes", 0, "maximum archive bytes")
+		if err := parseFlags(fs, args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 1 {
+			return errors.New("archive inspect requires one archive")
+		}
+		limits := inputLimits(*maxInput)
+		data, err := readInput(fs.Arg(0), limits.MaxInputBytes)
+		if err != nil {
+			return err
+		}
+		transcript, err := moirai.DecodeArchive(data, limits)
+		if err != nil {
+			return err
+		}
+		summary, err := summarizeArchive(data, transcript)
+		if err != nil {
+			return err
+		}
+		if *asJSON {
+			return writeJSON(a.out, summary)
+		}
+		a.printArchiveSummary(summary)
+		return nil
 	default:
 		return fmt.Errorf("unknown archive operation %q", args[0])
 	}
+}
+
+// archiveSummary is the exact allowlist of what archive inspect reveals about a
+// verified archive. Message bodies, block payloads, and every extra field stay
+// out unless a field is added here deliberately.
+type archiveSummary struct {
+	Format        string                   `json:"format"`
+	Version       string                   `json:"version"`
+	SchemaVersion string                   `json:"schema_version"`
+	CreatedAt     string                   `json:"created_at,omitempty"`
+	SHA256        string                   `json:"sha256"`
+	Valid         bool                     `json:"valid"`
+	ID            string                   `json:"id"`
+	Title         string                   `json:"title,omitempty"`
+	Timestamp     string                   `json:"timestamp,omitempty"`
+	UpdatedAt     string                   `json:"updated_at,omitempty"`
+	CWD           string                   `json:"cwd,omitempty"`
+	Model         string                   `json:"model,omitempty"`
+	Provenance    *moirai.Provenance       `json:"provenance,omitempty"`
+	Messages      int                      `json:"messages"`
+	Blocks        map[moirai.BlockType]int `json:"blocks"`
+	// Warnings counts warnings raised by this inspection. Archives do not
+	// retain source-conversion warnings, so it is zero for every archive that
+	// DecodeArchive accepts today.
+	Warnings int `json:"warnings"`
+}
+
+// archiveBlockTypes fixes the human output order. Validate rejects any other
+// block type, so the list is complete for a decoded archive.
+var archiveBlockTypes = []moirai.BlockType{moirai.BlockText, moirai.BlockThinking, moirai.BlockToolUse, moirai.BlockToolResult, moirai.BlockImage, moirai.BlockArtifact, moirai.BlockUnknown}
+
+// summarizeArchive builds the summary for an archive that DecodeArchive has
+// already accepted, so the envelope is re-read only after the digest passed.
+func summarizeArchive(data []byte, transcript *moirai.Transcript) (archiveSummary, error) {
+	var envelope struct {
+		CreatedAt string `json:"created_at"`
+		SHA256    string `json:"sha256"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return archiveSummary{}, err
+	}
+	blocks := make(map[moirai.BlockType]int, len(archiveBlockTypes))
+	for _, blockType := range archiveBlockTypes {
+		blocks[blockType] = 0
+	}
+	for _, message := range transcript.Messages {
+		for _, block := range message.Content {
+			blocks[block.Type]++
+		}
+	}
+	return archiveSummary{
+		Format:        "moirai.session",
+		Version:       moirai.ArchiveVersion,
+		SchemaVersion: transcript.SchemaVersion,
+		CreatedAt:     envelope.CreatedAt,
+		SHA256:        envelope.SHA256,
+		Valid:         true,
+		ID:            transcript.Meta.ID,
+		Title:         transcript.Meta.Title,
+		Timestamp:     transcript.Meta.Timestamp,
+		UpdatedAt:     transcript.Meta.UpdatedAt,
+		CWD:           transcript.Meta.CWD,
+		Model:         transcript.Meta.Model,
+		Provenance:    transcript.Meta.Provenance,
+		Messages:      len(transcript.Messages),
+		Blocks:        blocks,
+	}, nil
+}
+
+func (a app) printArchiveSummary(summary archiveSummary) {
+	a.printField("Format", fmt.Sprintf("%s %s (schema %s)", summary.Format, summary.Version, summary.SchemaVersion))
+	a.printField("Transcript digest", "sha256 "+summary.SHA256+" verified")
+	a.printField("Created", summary.CreatedAt)
+	a.printField("ID", summary.ID)
+	a.printField("Title", summary.Title)
+	a.printField("Timestamp", summary.Timestamp)
+	a.printField("Updated", summary.UpdatedAt)
+	a.printField("Working directory", summary.CWD)
+	a.printField("Model", summary.Model)
+	if provenance := summary.Provenance; provenance != nil {
+		a.printField("Source format", string(provenance.SourceFormat))
+		a.printField("Source session", provenance.SourceSessionID)
+		a.printField("Imported", provenance.ImportedAt)
+		a.printField("Parent session", provenance.ParentSessionID)
+		a.printField("Parent checkpoint", provenance.ParentCheckpoint)
+		a.printField("Source working directory", provenance.SourceCWD)
+	}
+	total := 0
+	for _, count := range summary.Blocks {
+		total += count
+	}
+	fmt.Fprintf(a.out, "Messages: %d\nBlocks: %d\n", summary.Messages, total)
+	for _, blockType := range archiveBlockTypes {
+		fmt.Fprintf(a.out, "  %s: %d\n", blockType, summary.Blocks[blockType])
+	}
+	fmt.Fprintf(a.out, "Warnings: %d\n", summary.Warnings)
+}
+
+// printField writes one "Label: value" line and skips empty values. The value
+// is terminal-scrubbed and its newlines collapsed, so untrusted text such as
+// "x\nID: spoof" cannot forge a second field.
+func (a app) printField(label, value string) {
+	if value == "" {
+		return
+	}
+	fmt.Fprintf(a.out, "%s: %s\n", label, strings.ReplaceAll(moirai.ScrubTerminal(value), "\n", " "))
 }
 
 func loadStored(ctx context.Context, selector string, format moirai.Format, limits moirai.Limits) (*moirai.ParseResult, error) {

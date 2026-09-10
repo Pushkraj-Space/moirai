@@ -22,7 +22,7 @@ import (
 )
 
 // Inspect declarations in their immediate lexical scope. In particular, the
-// two archive cases each own a different fs, while importSession owns one fs
+// three archive cases each own a different fs, while importSession owns one fs
 // that serves two commands. Unknown constructions fail rather than disappearing.
 func TestCompletionDrift(t *testing.T) {
 	paths, err := filepath.Glob("*.go")
@@ -453,9 +453,10 @@ func TestBashCompletion(t *testing.T) {
 		empty               bool
 	}{
 		{name: "top", words: []string{"moirai", "co"}, want: []string{"convert", "continue", "completion"}},
-		{name: "archive", words: []string{"moirai", "archive", ""}, want: []string{"create", "verify"}},
+		{name: "archive", words: []string{"moirai", "archive", ""}, want: []string{"create", "verify", "inspect"}},
 		{name: "create flags", words: []string{"moirai", "archive", "create", "--"}, want: []string{"--from", "--out"}},
 		{name: "verify flags", words: []string{"moirai", "archive", "verify", "--"}, want: []string{"--max-input-bytes"}, absent: []string{"--from", "--out"}},
+		{name: "inspect flags", words: []string{"moirai", "archive", "inspect", "--"}, want: []string{"--json", "--max-input-bytes"}, absent: []string{"--from", "--out"}},
 		{name: "format", words: []string{"moirai", "convert", "--from", ""}, want: formats},
 		{name: "equals", words: []string{"moirai", "convert", "--from=co"}, want: []string{"--from=codex", "--from=cowork"}},
 		{name: "split equals", words: []string{"moirai", "convert", "--from", "=", "co"}, want: []string{"codex", "cowork"}},
@@ -560,9 +561,10 @@ func TestNativeCompletion(t *testing.T) {
 				empty        bool
 			}{
 				{line: "moirai co", want: []string{"convert", "continue", "completion"}},
-				{line: "moirai archive ", want: []string{"create", "verify"}},
+				{line: "moirai archive ", want: []string{"create", "verify", "inspect"}},
 				{line: "moirai archive create --", want: []string{"--from", "--out"}},
 				{line: "moirai archive verify --", want: []string{"--max-input-bytes"}, absent: []string{"--from", "--out"}},
+				{line: "moirai archive inspect --", want: []string{"--json", "--max-input-bytes"}, absent: []string{"--from", "--out"}},
 				{line: "moirai convert --from=co", want: []string{"codex", "cowork"}},
 				{line: "moirai convert --from co", want: []string{"codex", "cowork"}},
 				{line: "moirai search archive --", want: []string{"--format", "--limit"}, absent: []string{"--from", "--out"}},

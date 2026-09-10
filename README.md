@@ -252,7 +252,14 @@ integrity digest:
 ```bash
 moirai archive create session.json --out session.moirai
 moirai archive verify session.moirai
+moirai archive inspect session.moirai
+moirai archive inspect session.moirai --json
 ```
+
+`archive inspect` verifies the transcript digest and prints selected metadata
+and block counts without printing message bodies or block payloads. Archives do
+not retain source-conversion warnings, so a zero warning count does not mean the
+original conversion was lossless.
 
 Deletion is deliberately explicit:
 
