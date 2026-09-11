@@ -221,46 +221,93 @@ codex  Codex  read,write,discover,continue
   warning: /home/me/.codex/sessions: store root does not exist; run Codex once, or set CODEX_HOME if its data lives elsewhere (store_missing)
 ```
 
-The `executable` line appears only for harnesses Moirai can launch and reports
-whether the launcher is on `PATH`. On macOS and Windows the Claude Cowork line
-therefore reflects the `open` or `cmd` launcher, not a verified installation.
+The `executable` line appears only when Moirai has a launch command for the
+harness. Claude Cowork and Cursor Desktop label this line `launcher`: Cowork
+uses `open` on macOS, `cmd` on Windows, and `claude-desktop` on Linux; Cursor
+Desktop uses `cursor`. Finding the program on `PATH` does not verify that the
+desktop application is installed. Amp and Hermes have no launch command, so
+their executable status is omitted.
+
 The `store` line shows the resolved root and names the override variable that
 is set, or the variables that would override it. Harnesses without a local
 store (`simple`, `claude_chat`, `chatgpt`) show `store: none`.
 
-The `status` line combines a read phrase with, for stores Moirai can save into,
-a write phrase:
+The `status` line reports `missing`, `unknown`, `wrong type`, `readable`, or
+`not readable`. Directory stores Moirai can save into also report `writable`,
+`not writable`, or `write access not checked` (on non-Unix platforms, including
+Windows). File-backed stores and source-only stores omit the write status.
+Harnesses without a store show `status: none`.
 
-| Status | Meaning | Fix |
+Warnings use these codes:
+
+| Code | Meaning | Fix |
 |---|---|---|
-| `missing` | The store root does not exist. | Run the harness once so it creates its data directory, or set the named variable if the data lives elsewhere. |
-| `unknown` | The root could not be inspected, usually because a parent directory denies access. | Check the ownership and permissions of the parent directories. |
-| `wrong type` | A file sits where a directory is expected, a directory where a database file is expected, or the path is a pipe, socket, or device. Doctor never opens such a path. | Move the entry aside, or point the override variable at the real store. |
-| `not readable` | The root exists but cannot be opened. | Fix its ownership or permissions. |
-| `readable` | The root can be opened. | |
-| `writable`, `not writable` | Whether the current account may create entries in the root. | Fix its ownership or permissions. |
-| `write access not checked` | Write permission is not queried on this platform (Windows). | Run an import; it reports any permission error. |
+| `executable_missing` | The launch program was not found on `PATH`. | Install it or add it to `PATH`. |
+| `store_missing` | The store root does not exist. | Run the harness once, or set the named override if the data lives elsewhere. |
+| `store_stat_failed` | The root could not be inspected; existence is unknown. | Check parent-directory permissions and symlink targets. |
+| `store_wrong_type` | The root has the wrong kind: a file where a directory belongs, a directory where a database file belongs, or a pipe, socket, or device. | Point the store override at the correct root. |
+| `store_unreadable` | Opening and closing the root failed. | Check its ownership and permissions. |
+| `store_unwritable` | The directory failed the write and search permission query. | Check ownership, permissions, and whether the filesystem is read-only. |
 
-Warnings carry one of these codes: `executable_missing`, `store_missing`,
-`store_stat_failed`, `store_wrong_type`, `store_unreadable`, and
-`store_unwritable`.
+These are diagnostic statuses, including missing optional harnesses and stores;
+they do not make the command exit with an error.
 
 `moirai doctor --json` emits an array with one object per harness holding
 `format`, `display_name`, `capabilities`, `executable`, `installed`, `store`,
 `store_overrides`, `active_override`, `exists`, `readable`, `writable`, and
-`warnings`. A key is absent when its check is unknown or does not apply, so
-scripts should test for presence rather than assume `false`. JSON keeps paths
-and error text verbatim; the human report scrubs terminal control characters.
+`warnings`. `capabilities` contains the registry's boolean capability object;
+`installed`, `exists`, `readable`, and `writable` are optional booleans. A key is
+absent when its check is unknown or does not apply, so scripts should test for
+presence rather than assume `false`. Empty strings and lists are also omitted.
+For example, a missing Codex store with a launch program on `PATH` looks like:
 
-Doctor is read-only. It stats and opens store roots but never lists
-directories, reads transcripts, writes files, or touches the network, and it
-does not print environment-variable values on their own (a resolved store path
-does reveal the value of the active override). Write permission is queried with
-`access(2)` rather than tested by writing, so it is advisory for the account
-running doctor: it uses real credentials, always succeeds for root, and does not
-cover nested destination directories, disk space, or a harness's own import.
-Database-file stores are never write-checked; OpenCode saves go through
-`opencode import`, and Hermes is source-only.
+```json
+[
+  {
+    "format": "codex",
+    "display_name": "Codex",
+    "capabilities": {
+      "read": true, "write": true, "discover": true, "save": true,
+      "delete": true, "continue": true, "remote": false, "source_only": false
+    },
+    "executable": "codex",
+    "installed": true,
+    "store": "/home/me/.codex/sessions",
+    "store_overrides": ["CODEX_HOME"],
+    "exists": false,
+    "warnings": [{
+      "path": "/home/me/.codex/sessions",
+      "code": "store_missing",
+      "message": "store root does not exist; run Codex once, or set CODEX_HOME if its data lives elsewhere"
+    }]
+  }
+]
+```
+
+The full array follows registry order. JSON `installed` means only that the
+launch program can be found on `PATH`, including desktop launchers. Each
+`store_overrides` list contains environment-variable names in precedence order,
+including `XDG_DATA_HOME` for Amp and OpenCode and `APPDATA` for Cowork on
+Windows. `active_override`, when present, names the first nonempty variable;
+empty and shadowed variables do not become active. JSON preserves paths and
+error text; the human report scrubs terminal control characters.
+
+Doctor is read-only. It stats each root, following symlinks, and only opens and
+closes roots whose type matches the store: a regular file for OpenCode and
+Hermes, a directory for other stores. Pipes, sockets, and devices fail the type
+check before opening. Doctor never lists directories, discovers or loads
+sessions, reads transcripts, runs launchers, writes files, or touches the
+network. It does not print environment-variable values separately; the resolved
+store path may still reveal all or part of the active override value.
+
+On Unix, writability is queried with `access(2)` using `W_OK | X_OK` and the
+process's **real** user/group credentials. Readability uses `os.Open` and the
+process's **effective** credentials. Writability is advisory for the invoking
+account: root can bypass ordinary mode bits, but a read-only filesystem can
+reject even root. The check does not cover nested destination directories,
+disk space, or a harness's own import. Database-file stores are never checked
+for writability; OpenCode saves go through `opencode import`, and Hermes is
+source-only.
 
 ## Supported formats
 
