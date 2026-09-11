@@ -198,6 +198,23 @@ moirai continue 'SESSION_ID#12-38' --from claude_code --with pi
 Each cross-harness handoff receives a fresh session ID and provenance pointing
 to its source. The original session is not modified.
 
+Preview an import before saving it, with conversion warnings and the resolved
+destination store:
+
+```bash
+moirai import session.json --to claude_code --dry-run
+moirai import session.json --to codex --dry-run --json
+moirai continue 'SESSION_ID#3-' --from claude_code --with codex --dry-run --json
+```
+
+Dry-run renders and validates the conversion without saving a session or
+launching a harness. JSON reports `launch: false` and a `range` with one-based,
+inclusive `start` and `end` bounds for a selected message range; open-ended
+ranges resolve to the last selected message. File inputs and stored sessions
+without a range report `range: null`. Human output shows the resolved range,
+for example `Range: messages 3-6`, or `Range: all N messages` when no range is
+selected.
+
 ## Troubleshooting
 
 `moirai doctor` reports, for every supported harness, whether its executable is
