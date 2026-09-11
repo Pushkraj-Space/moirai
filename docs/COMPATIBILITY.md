@@ -8,6 +8,9 @@ Every conversion result includes warnings for unsupported canonical blocks and
 known source omissions. Applications must display them. Native readers do not
 currently populate `extra` or `unknown` for all discarded fields.
 
+The Claude Code codec is shared by the Go library and the TypeScript SDK; the
+other native codecs listed below are Go-only.
+
 | Format | Portable context | Not carried to other harnesses |
 | --- | --- | --- |
 | Claude Code | user/assistant text, signed or redacted thinking, tool calls/results, images, model, usage, title and workspace | file snapshots, progress/system/queue records, parent graph, request/user/agent bookkeeping, inline and file-based sidechains |

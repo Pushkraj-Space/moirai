@@ -27,7 +27,7 @@ test("simple codec round-trips and pairs tools", () => {
     { role: "user", content: [{ type: "tool_result", content: "ok" }] },
   ] }));
   assert.equal(parsed.transcript.messages[1].content[0].tool_use_id, parsed.transcript.messages[0].content[0].id);
-  assert.equal(codec.parse(codec.render(parsed.transcript)).transcript.messages.length, 2);
+  assert.equal(codec.parse(codec.render(parsed.transcript).data).transcript.messages.length, 2);
 });
 
 test("simple codec accepts and emits canonical metadata", () => {
@@ -35,7 +35,7 @@ test("simple codec accepts and emits canonical metadata", () => {
   const parsed = codec.parse(JSON.stringify({ schema_version: "1.0", meta: { id: "canonical", cwd: "/repo", extra: { source: true } }, messages: [{ role: "user", content: "hello" }] }));
   assert.equal(parsed.transcript.meta.id, "canonical");
   assert.equal(parsed.transcript.meta.cwd, "/repo");
-  const rendered = JSON.parse(codec.render(parsed.transcript));
+  const rendered = JSON.parse(codec.render(parsed.transcript).data);
   assert.equal(rendered.meta.id, "canonical");
   assert.equal(rendered.id, undefined);
 });

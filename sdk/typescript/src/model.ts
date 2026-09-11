@@ -35,6 +35,7 @@ export interface Metadata {
 export interface Transcript { schema_version: typeof SCHEMA_VERSION; meta: Metadata; messages: Message[]; extra?: unknown }
 export interface Warning { path?: string; code: string; message: string }
 export interface ParseResult { transcript: Transcript; warnings: Warning[] }
+export interface RenderResult { data: string; warnings: Warning[] }
 export interface Limits {
   maxInputBytes: number; maxMessages: number; maxBlocks: number; maxTextBytes: number;
   maxInlineMediaBytes: number; maxMetadataBytes: number; maxNestingDepth: number;

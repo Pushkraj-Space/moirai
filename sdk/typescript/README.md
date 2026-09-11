@@ -12,5 +12,6 @@ console.log(search(transcript, "failing test"));
 
 The SDK validates the versioned canonical schema, safety limits, tool-call
 pairing, UTF-8-bounded text projection, message ranges, fuzzy search, and
-SHA-256 integrity archives. It does not include native harness codecs or local
-stores; those are provided only by the Go library and `moirai` CLI.
+SHA-256 integrity archives. It includes the Claude Code JSONL codec; the other
+native harness codecs and local stores are provided only by the Go library and
+`moirai` CLI.

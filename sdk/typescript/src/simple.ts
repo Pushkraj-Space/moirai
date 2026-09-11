@@ -1,13 +1,13 @@
 import {
   DEFAULT_LIMITS, type Block, type Limits, type Message, MoiraiError, newId,
-  type ParseResult, SCHEMA_VERSION, type Transcript, type Warning, validate,
+  type ParseResult, type RenderResult, SCHEMA_VERSION, type Transcript, type Warning, validate,
 } from "./model.js";
 
 export interface ParseOptions { limits?: Limits; sourceId?: string; now?: () => string }
 export interface Codec {
   readonly format: string;
   parse(data: string | Uint8Array, options?: ParseOptions): ParseResult;
-  render(transcript: Transcript, limits?: Limits): string;
+  render(transcript: Transcript, limits?: Limits): RenderResult;
 }
 
 export class SimpleCodec implements Codec {
@@ -63,9 +63,9 @@ export class SimpleCodec implements Codec {
     validate(transcript, limits);
     return { transcript, warnings };
   }
-  render(transcript: Transcript, limits: Limits = { ...DEFAULT_LIMITS }): string {
+  render(transcript: Transcript, limits: Limits = { ...DEFAULT_LIMITS }): RenderResult {
     validate(transcript, limits);
-    return `${JSON.stringify(transcript, null, 2)}\n`;
+    return { data: `${JSON.stringify(transcript, null, 2)}\n`, warnings: [] };
   }
 }
 
@@ -150,7 +150,8 @@ export class Registry {
   convert(data: string | Uint8Array, from: string, to: string, options?: ParseOptions): { data: string; warnings: Warning[] } {
     const parsed = this.codec(from).parse(data, options);
     if (from !== to) { const original = parsed.transcript.meta.id; parsed.transcript.meta.id = newId(); parsed.transcript.meta.provenance = { source_format: from as never, source_session_id: original, imported_at: new Date().toISOString() }; }
-    return { data: this.codec(to).render(parsed.transcript, options?.limits), warnings: parsed.warnings };
+    const rendered = this.codec(to).render(parsed.transcript, options?.limits);
+    return { data: rendered.data, warnings: [...parsed.warnings, ...rendered.warnings] };
   }
 }
 export const defaultRegistry = new Registry();
