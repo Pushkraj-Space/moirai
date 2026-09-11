@@ -19,8 +19,10 @@ import (
 const version = "0.2.0"
 
 type app struct {
-	out io.Writer
-	err io.Writer
+	out       io.Writer
+	err       io.Writer
+	newStores func() (*moirai.StoreRegistry, error)
+	launch    func(context.Context, moirai.LaunchCommand) error
 }
 
 func main() {
@@ -274,6 +276,20 @@ func (a app) convert(args []string) error {
 }
 
 func stores() (*moirai.StoreRegistry, error) { return moirai.DefaultStores() }
+
+func (a app) storeRegistry() (*moirai.StoreRegistry, error) {
+	if a.newStores != nil {
+		return a.newStores()
+	}
+	return stores()
+}
+
+func (a app) launchCmd(ctx context.Context, command moirai.LaunchCommand) error {
+	if a.launch != nil {
+		return a.launch(ctx, command)
+	}
+	return moirai.Launch(ctx, command)
+}
 
 func (a app) list(ctx context.Context, args []string) error {
 	fs := newFlags("list", a.err)
@@ -534,6 +550,7 @@ func (a app) importSession(ctx context.Context, args []string, continuing bool) 
 	var transcript *moirai.Transcript
 	var warnings []moirai.Warning
 	var sourceFormat moirai.Format
+	var selectedRange *moirai.Span
 	if *from != "" && !isInputFile(fs.Arg(0)) {
 		parsed, err := loadStored(ctx, fs.Arg(0), moirai.Format(*from), storeLimits(*maxInput))
 		if err != nil {
@@ -542,6 +559,13 @@ func (a app) importSession(ctx context.Context, args []string, continuing bool) 
 		transcript = parsed.Transcript
 		warnings = append(warnings, parsed.Warnings...)
 		sourceFormat = moirai.Format(*from)
+		if *dryRun {
+			selector, err := moirai.ParseSelector(fs.Arg(0))
+			if err != nil {
+				return err
+			}
+			selectedRange = selector.Span
+		}
 	} else {
 		parsed, detected, err := parseFile(fs.Arg(0), moirai.Format(*from), inputLimits(*maxInput))
 		if err != nil {
@@ -576,7 +600,7 @@ func (a app) importSession(ctx context.Context, args []string, continuing bool) 
 	}
 	copy.Meta.Provenance = &provenance
 	copy.Meta.ID = id
-	registry, err := stores()
+	registry, err := a.storeRegistry()
 	if err != nil {
 		return err
 	}
@@ -597,12 +621,20 @@ func (a app) importSession(ctx context.Context, args []string, continuing bool) 
 			return err
 		}
 		warnings = append(warnings, rendered.Warnings...)
-		report := map[string]any{"dry_run": true, "source_format": sourceFormat, "target_format": target, "destination_store": store.Root(), "messages": len(copy.Messages), "rendered_bytes": len(rendered.Data), "launch": continuing && !*noLaunch, "warnings": warnings, "provenance": provenance}
+		if selectedRange != nil {
+			selectedRange.End = selectedRange.Start + len(copy.Messages) - 1
+		}
+		report := map[string]any{"dry_run": true, "source_format": sourceFormat, "target_format": target, "destination_store": store.Root(), "messages": len(copy.Messages), "rendered_bytes": len(rendered.Data), "launch": false, "warnings": warnings, "provenance": provenance, "range": selectedRange}
 		if *asJSON {
 			return writeJSON(a.out, report)
 		}
 		a.printWarnings(warnings)
-		fmt.Fprintf(a.out, "Preview: %s → %s, %d messages, %d bytes\nDestination: %s\nLaunch: %t\n", sourceFormat, target, len(copy.Messages), len(rendered.Data), moirai.ScrubTerminal(store.Root()), continuing && !*noLaunch)
+		fmt.Fprintf(a.out, "Preview: %s → %s, %d messages, %d bytes\nDestination: %s\nLaunch: false\n", sourceFormat, target, len(copy.Messages), len(rendered.Data), moirai.ScrubTerminal(store.Root()))
+		if selectedRange == nil {
+			fmt.Fprintf(a.out, "Range: all %d messages\n", len(copy.Messages))
+		} else {
+			fmt.Fprintf(a.out, "Range: messages %d-%d\n", selectedRange.Start, selectedRange.End)
+		}
 		return nil
 	}
 	saved, err := store.Save(ctx, &copy, moirai.RenderOptions{Limits: storeLimits(*maxInput), ID: id})
@@ -619,7 +651,7 @@ func (a app) importSession(ctx context.Context, args []string, continuing bool) 
 		return err
 	}
 	fmt.Fprintf(a.err, "saved %s session %s; launching %s\n", target, saved.Ref.ID, command.Program)
-	return moirai.Launch(ctx, command)
+	return a.launchCmd(ctx, command)
 }
 
 func (a app) delete(ctx context.Context, args []string) error {
