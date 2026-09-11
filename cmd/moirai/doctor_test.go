@@ -92,6 +92,9 @@ func runDoctor(t *testing.T) doctorResult {
 	}
 	result := doctorResult{rows: map[moirai.Format]doctorRow{}, raw: map[moirai.Format]map[string]json.RawMessage{}}
 	for index, row := range rows {
+		if row.Format != moirai.Formats[index] {
+			t.Fatalf("row %d: format %s, want %s", index, row.Format, moirai.Formats[index])
+		}
 		result.rows[row.Format] = row
 		result.raw[row.Format] = raw[index]
 	}
@@ -101,6 +104,14 @@ func runDoctor(t *testing.T) doctorResult {
 		t.Fatal(err)
 	}
 	result.human = stdout.String()
+	previous := -1
+	for _, row := range rows {
+		index := strings.Index(result.human, string(row.Format)+"  "+row.DisplayName+"  ")
+		if index <= previous {
+			t.Fatalf("human output is missing %s or out of registry order:\n%s", row.Format, result.human)
+		}
+		previous = index
+	}
 	return result
 }
 
@@ -161,6 +172,11 @@ func TestDoctorReportsStatuses(t *testing.T) {
 	if !isTrue(claude.Exists) || !isTrue(claude.Readable) || len(claude.Warnings) != 0 {
 		t.Fatalf("claude status: %+v", claude)
 	}
+	if runtime.GOOS == "windows" {
+		if result.hasKey(moirai.FormatClaudeCode, "writable") || !strings.Contains(result.human, "status: readable, write access not checked\n") {
+			t.Fatalf("Windows write access must be not checked: %+v\n%s", claude, result.human)
+		}
+	}
 	codex := result.row(t, moirai.FormatCodex)
 	codexRoot := filepath.Join(codexHome, "sessions")
 	if codex.Executable != "codex" || !isFalse(codex.Installed) || codex.Store != codexRoot || !isFalse(codex.Exists) {
@@ -193,6 +209,11 @@ func TestDoctorReportsStatuses(t *testing.T) {
 
 func TestDoctorOmitsInapplicableKeys(t *testing.T) {
 	home, _ := isolatedDoctorEnv(t)
+	ampRoot := filepath.Join(home, "amp-threads")
+	if err := os.Mkdir(ampRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AMP_THREADS_DIR", ampRoot)
 	openCodeDB := filepath.Join(home, "opencode.db")
 	hermesHome := filepath.Join(home, "hermes")
 	if err := os.MkdirAll(hermesHome, 0o700); err != nil {
@@ -214,13 +235,17 @@ func TestDoctorOmitsInapplicableKeys(t *testing.T) {
 			}
 		}
 	}
-	for _, format := range []moirai.Format{moirai.FormatOpenCode, moirai.FormatHermes} {
+	for _, format := range []moirai.Format{moirai.FormatOpenCode, moirai.FormatHermes, moirai.FormatAmp} {
 		row := result.row(t, format)
-		if !isTrue(row.Exists) || !isTrue(row.Readable) || len(row.Warnings) != 0 && row.Warnings[0].Code != "executable_missing" {
+		wantCodes := []string{}
+		if format == moirai.FormatOpenCode {
+			wantCodes = append(wantCodes, "executable_missing")
+		}
+		if !isTrue(row.Exists) || !isTrue(row.Readable) || !slices.Equal(warningCodes(row), wantCodes) {
 			t.Errorf("%s row: %+v", format, row)
 		}
 		if result.hasKey(format, "writable") {
-			t.Errorf("%s is a database file and must not report writable: %s", format, result.raw[format]["writable"])
+			t.Errorf("%s is file-backed or source-only and must not report writable: %s", format, result.raw[format]["writable"])
 		}
 	}
 	if !strings.Contains(result.human, "opencode  OpenCode  read,write,discover,continue\n  executable: opencode (not on PATH)\n  store: "+openCodeDB+" (OPENCODE_DB is set)\n  status: readable\n") {
@@ -382,28 +407,52 @@ func TestDoctorOverridePrecedence(t *testing.T) {
 	type precedence struct {
 		format        moirai.Format
 		first, second string
+		fallback      string
 	}
 	cases := []precedence{
-		{moirai.FormatPi, "PI_CODING_AGENT_SESSION_DIR", "PI_CODING_AGENT_DIR"},
-		{moirai.FormatCampfire, "CAMPFIRE_CODING_AGENT_SESSION_DIR", "CAMPFIRE_CODING_AGENT_DIR"},
-		{moirai.FormatAmp, "AMP_THREADS_DIR", "XDG_DATA_HOME"},
-		{moirai.FormatOpenCode, "OPENCODE_DB", "XDG_DATA_HOME"},
+		{moirai.FormatPi, "PI_CODING_AGENT_SESSION_DIR", "PI_CODING_AGENT_DIR", "sessions"},
+		{moirai.FormatCampfire, "CAMPFIRE_CODING_AGENT_SESSION_DIR", "CAMPFIRE_CODING_AGENT_DIR", "sessions"},
+		{moirai.FormatAmp, "AMP_THREADS_DIR", "XDG_DATA_HOME", filepath.Join("amp", "threads")},
+		{moirai.FormatOpenCode, "OPENCODE_DB", "XDG_DATA_HOME", filepath.Join("opencode", "opencode.db")},
 	}
 	if runtime.GOOS == "windows" {
-		cases = append(cases, precedence{moirai.FormatCowork, "COWORK_SESSIONS_DIR", "APPDATA"})
+		cases = append(cases, precedence{moirai.FormatCowork, "COWORK_SESSIONS_DIR", "APPDATA", filepath.Join("Claude", "local-agent-mode-sessions")})
 	}
 	for _, c := range cases {
 		t.Run(string(c.format), func(t *testing.T) {
 			isolatedDoctorEnv(t)
+			defaults := runDoctor(t)
+			if defaults.hasKey(c.format, "active_override") {
+				t.Fatal("empty overrides must not report an active_override")
+			}
 			winner := filepath.Join(t.TempDir(), "winner")
 			if c.first == "OPENCODE_DB" {
 				winner += ".db"
 			}
 			t.Setenv(c.first, winner)
-			t.Setenv(c.second, filepath.Join(t.TempDir(), "loser"))
-			row := runDoctor(t).row(t, c.format)
+			second := filepath.Join(t.TempDir(), "shadowed-override-value")
+			t.Setenv(c.second, second)
+			result := runDoctor(t)
+			row := result.row(t, c.format)
 			if row.Store != winner || row.ActiveOverride != c.first || !slices.Equal(row.StoreOverrides, []string{c.first, c.second}) {
 				t.Fatalf("row: %+v", row)
+			}
+			encoded, err := json.Marshal(row)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(encoded), "shadowed-override-value") {
+				t.Fatalf("row prints the shadowed override value: %s", encoded)
+			}
+			t.Setenv(c.first, "")
+			row = runDoctor(t).row(t, c.format)
+			if row.Store != filepath.Join(second, c.fallback) || row.ActiveOverride != c.second {
+				t.Fatalf("empty first override must fall back to second: %+v", row)
+			}
+			t.Setenv(c.second, "")
+			result = runDoctor(t)
+			if row = result.row(t, c.format); row.Store != defaults.rows[c.format].Store || result.hasKey(c.format, "active_override") {
+				t.Fatalf("empty overrides must fall back to the default root: %+v", row)
 			}
 		})
 	}
@@ -453,5 +502,127 @@ func TestDoctorRejectsArguments(t *testing.T) {
 		if err := a.run(context.Background(), args); err == nil {
 			t.Errorf("%v: expected an error", args)
 		}
+	}
+}
+
+func TestDoctorExecutables(t *testing.T) {
+	for _, installed := range []bool{false, true} {
+		name := "empty PATH"
+		if installed {
+			name = "fake executables"
+		}
+		t.Run(name, func(t *testing.T) {
+			_, bin := isolatedDoctorEnv(t)
+			if installed {
+				for _, info := range moirai.DefaultRegistry.Harnesses() {
+					if command, err := moirai.CommandFor(info.Format, moirai.SessionRef{}); err == nil {
+						fakeExecutable(t, bin, command.Program)
+					}
+				}
+				// A binary alone cannot make a source-only harness launchable.
+				fakeExecutable(t, bin, "amp")
+				fakeExecutable(t, bin, "hermes")
+			}
+			result := runDoctor(t)
+			for _, info := range moirai.DefaultRegistry.Harnesses() {
+				row := result.row(t, info.Format)
+				if row.DisplayName != info.DisplayName || row.Capabilities != info.Capability {
+					t.Errorf("%s metadata differs from registry: %+v", info.Format, row)
+				}
+				command, err := moirai.CommandFor(info.Format, moirai.SessionRef{})
+				if err != nil {
+					if result.hasKey(info.Format, "executable") || result.hasKey(info.Format, "installed") {
+						t.Errorf("%s has no launch command but reports executable status: %+v", info.Format, row)
+					}
+					if _, ok := findWarning(row, "executable_missing"); ok {
+						t.Errorf("%s has no launch command but warns about an executable", info.Format)
+					}
+					continue
+				}
+				if row.Executable != command.Program || row.Installed == nil || *row.Installed != installed {
+					t.Errorf("%s executable status: %+v", info.Format, row)
+				}
+				if _, ok := findWarning(row, "executable_missing"); ok == installed {
+					t.Errorf("%s executable warning: %+v", info.Format, row.Warnings)
+				}
+				if info.Format == moirai.FormatCowork || info.Format == moirai.FormatCursorDesktop {
+					if !strings.Contains(result.human, "  launcher: "+command.Program+" (") {
+						t.Errorf("%s must label the program as a launcher:\n%s", info.Format, result.human)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDoctorFollowsStoreSymlinks(t *testing.T) {
+	for _, file := range []bool{false, true} {
+		name := "directory"
+		if file {
+			name = "file"
+		}
+		t.Run(name, func(t *testing.T) {
+			home, bin := isolatedDoctorEnv(t)
+			target := filepath.Join(home, "target")
+			link := filepath.Join(home, "store")
+			format, variable := moirai.FormatPi, "PI_CODING_AGENT_SESSION_DIR"
+			if file {
+				format, variable = moirai.FormatOpenCode, "OPENCODE_DB"
+				if err := os.WriteFile(target, []byte("not a database; doctor must not parse it"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Mkdir(target, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, link); err != nil {
+				if runtime.GOOS == "windows" {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+				t.Fatal(err)
+			}
+			command, err := moirai.CommandFor(format, moirai.SessionRef{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fakeExecutable(t, bin, command.Program)
+			t.Setenv(variable, link)
+			result := runDoctor(t)
+			row := result.row(t, format)
+			if row.Store != link || !isTrue(row.Exists) || !isTrue(row.Readable) || len(row.Warnings) != 0 {
+				t.Fatalf("symlink to %s: %+v", name, row)
+			}
+			if file && result.hasKey(format, "writable") {
+				t.Fatal("file-backed symlink must not report writable")
+			}
+		})
+	}
+}
+
+func TestFormatsHumanOutputUnchanged(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	a := app{out: &stdout, err: &stderr}
+	if err := a.run(context.Background(), []string{"formats"}); err != nil {
+		t.Fatal(err)
+	}
+	// Captured from main before extracting capabilityNames.
+	const want = `simple             Simple                 read,write
+claude_code        Claude Code            read,write,discover,continue
+codex              Codex                  read,write,discover,continue
+pi                 pi                     read,write,discover,continue
+amp                Amp                    read,write,discover,source-only
+opencode           OpenCode               read,write,discover,continue
+cursor             Cursor Agent           read,write,discover,continue
+cursor_desktop     Cursor                 read,write,discover
+grok               Grok CLI               read,write,discover,continue
+hermes             Hermes Agent           read,write,discover,source-only
+antigravity        Antigravity CLI        read,write,discover,continue
+campfire           Campfire               read,write,discover,continue
+cowork             Claude Cowork          read,write,discover
+fx                 fx                     read,write,discover,continue
+claude_chat        Claude Chat            read,source-only
+chatgpt            ChatGPT                read,source-only
+`
+	if stdout.String() != want {
+		t.Fatalf("formats output changed:\ngot  %q\nwant %q", stdout.String(), want)
 	}
 }

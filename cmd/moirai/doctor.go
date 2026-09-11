@@ -28,10 +28,11 @@ type doctorRow struct {
 	Readable       *bool             `json:"readable,omitempty"`
 	Writable       *bool             `json:"writable,omitempty"`
 	Warnings       []moirai.Warning  `json:"warnings,omitempty"`
+}
 
-	// writeChecked records that a write check applies to the root, so the
-	// human report can tell "not checked" apart from "not applicable".
-	writeChecked bool
+var fileBackedFormats = map[moirai.Format]bool{
+	moirai.FormatOpenCode: true,
+	moirai.FormatHermes:   true,
 }
 
 func (a app) doctor(args []string) error {
@@ -80,14 +81,14 @@ func (r *doctorRow) checkExecutable(program string) {
 }
 
 // checkStore reports on the store root without opening anything whose type is
-// unexpected: a named pipe or socket would block, and a directory where a
-// database file belongs cannot be a store.
+// unexpected. Stat follows symlinks to legitimate roots while allowing the
+// kind gate to reject pipes, sockets, and devices before opening the root.
 func (r *doctorRow) checkStore(store moirai.Store) {
 	root := store.Root()
 	r.Store = root
 	r.StoreOverrides = storeOverrides(r.Format)
 	r.ActiveOverride = activeOverride(r.StoreOverrides)
-	wantFile := expectsFile(store)
+	wantFile := fileBackedFormats[r.Format]
 	info, err := os.Stat(root)
 	if errors.Is(err, fs.ErrNotExist) {
 		r.Exists = boolPtr(false)
@@ -110,16 +111,15 @@ func (r *doctorRow) checkStore(store moirai.Store) {
 	}
 	file, err := os.Open(root)
 	if err == nil {
-		file.Close()
-		r.Readable = boolPtr(true)
-	} else {
-		r.Readable = boolPtr(false)
-		r.warn(root, "store_unreadable", fmt.Sprintf("store root cannot be opened: %v; fix its ownership or permissions", underlyingError(err)))
+		err = file.Close()
+	}
+	r.Readable = boolPtr(err == nil)
+	if err != nil {
+		r.warn(root, "store_unreadable", fmt.Sprintf("store root readability check failed: %v; fix its ownership or permissions", underlyingError(err)))
 	}
 	if wantFile || !r.Capabilities.Save {
 		return
 	}
-	r.writeChecked = true
 	r.Writable = writableDir(root)
 	if r.Writable != nil && !*r.Writable {
 		r.warn(root, "store_unwritable", "store root is not writable by the current user; fix its ownership or permissions")
@@ -140,11 +140,15 @@ func (r doctorRow) overrideHint() string {
 func (r doctorRow) print(w io.Writer) {
 	fmt.Fprintf(w, "%s  %s  %s\n", r.Format, r.DisplayName, strings.Join(capabilityNames(r.Capabilities), ","))
 	if r.Executable != "" {
+		label := "executable"
+		if r.Format == moirai.FormatCowork || r.Format == moirai.FormatCursorDesktop {
+			label = "launcher"
+		}
 		state := "found"
 		if !*r.Installed {
 			state = "not on PATH"
 		}
-		fmt.Fprintf(w, "  executable: %s (%s)\n", r.Executable, state)
+		fmt.Fprintf(w, "  %s: %s (%s)\n", label, r.Executable, state)
 	}
 	fmt.Fprintf(w, "  store: %s\n", r.storeLine())
 	fmt.Fprintf(w, "  status: %s\n", r.statusLine())
@@ -186,7 +190,7 @@ func (r doctorRow) statusLine() string {
 	case !*r.Readable:
 		read = "not readable"
 	}
-	if !r.writeChecked {
+	if r.Readable == nil || !r.Capabilities.Save || fileBackedFormats[r.Format] {
 		return read
 	}
 	write := "write access not checked"
@@ -242,17 +246,6 @@ func activeOverride(names []string) string {
 		}
 	}
 	return ""
-}
-
-// expectsFile reports whether the store root is a database file rather than a
-// directory of sessions.
-func expectsFile(store moirai.Store) bool {
-	switch store.(type) {
-	case *moirai.OpenCodeStore, *moirai.HermesStore:
-		return true
-	default:
-		return false
-	}
 }
 
 func describeMode(mode fs.FileMode) string {
